@@ -88,28 +88,16 @@ class VisibleTerminal(BaseTerminal):
             "Enter"
         ])
 
+
     def capture(self, screenshot_path):
 
         logger.info(f"Capturing screenshot: {screenshot_path}")
-
-        if not self.window_id:
-            logger.error("No window ID found for terminal")
-            return None
-
-        subprocess.run(["xdotool", "windowactivate", self.window_id])
-
-        subprocess.run(
-            [
-                "scrot",
-                "-u",
-                "-w",
-                self.window_id,
-                screenshot_path
-            ]
-        )
-
+        subprocess.run([
+            "scrot",
+            screenshot_path
+        ])
         return screenshot_path
-    
+
     def capture_output(self):
 
         result = subprocess.run(

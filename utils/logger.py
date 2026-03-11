@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-
+from datetime import datetime
 from config.settings import settings
 
 
@@ -8,8 +8,9 @@ def setup_logger():
     """
     Initialize the global TCAF logger.
     """
+    date_str = datetime.now().strftime("%Y_%m_%d")
+    log_file = settings.LOG_DIR / f"{date_str}_tcaf.log"
 
-    log_file = settings.LOG_DIR / "tcaf.log"
 
     logger = logging.getLogger("tcaf")
     logger.setLevel(settings.LOG_LEVEL)
@@ -31,8 +32,8 @@ def setup_logger():
 
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
-
     return logger
 
 
 logger = setup_logger()
+

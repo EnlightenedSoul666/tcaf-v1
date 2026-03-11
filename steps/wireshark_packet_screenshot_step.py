@@ -19,7 +19,10 @@ class WiresharkPacketScreenshotStep(Step):
 
         screenshot_dir = context.evidence.screenshot_path(clause, testcase)
 
-        screenshot_file = f"{screenshot_dir}/packet_frame_{frame}.png"
+        timestamped_name = context.evidence.get_timestamped_filename(f"packet_frame_{frame}.png")
+
+	# Build the final file path
+        screenshot_file = f"{screenshot_dir}/{timestamped_name}"
 
         logger.info(f"Opening Wireshark for frame {frame}")
 

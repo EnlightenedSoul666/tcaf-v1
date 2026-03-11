@@ -31,7 +31,7 @@ class TC1SSHFirstConnection(TestCase):
         tm.create_terminal("tester")
 
         StepRunner([
-            PcapStartStep(interface="eth0", filename="tc1_ssh_auth.pcapng"),
+            PcapStartStep(interface="any", filename="tc1_ssh_auth.pcapng"),
             CommandStep("tester", ssh_cmd)
         ]).run(context)
 

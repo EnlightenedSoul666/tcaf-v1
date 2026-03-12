@@ -1,3 +1,4 @@
+from core.testcase import TestCase
 from core.step_runner import StepRunner
 from steps.pcap_start_step import PcapStartStep
 from steps.pcap_stop_step import PcapStopStep
@@ -10,16 +11,9 @@ import os
 import time
 
 
-class TC2ICMPIPv6:
+class TC2ICMPIPv6(TestCase):
     def __init__(self):
-        self.name = "TC2_ICMP_IPV6"
-        self.description = "IPv6 ICMP type filtering compliance test"
-        self.status = "PENDING"
-        self.evidence = []
-
-    def add_evidence(self, filepath):
-        if filepath:
-            self.evidence.append(filepath)
+        super().__init__("TC2_ICMP_IPV6", "IPv6 ICMP type filtering compliance test")
 
     def run(self, context):
         context.current_testcase = self

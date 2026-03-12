@@ -14,11 +14,16 @@ def run(
     section: str = typer.Option(None, "--section", help="Run a section of clauses"),
 ):
     initialize_directories()
-    
+
     logger.info("TCAF CLI started")
-    
+
     # Always ask for DuT IP (needed by all clauses)
     dut_ip = input("Enter DuT IP address: ")
+
+    # Ask for IPv6 if running clause 1.10.1 (for TC2)
+    dut_ipv6 = None
+    if clause == "1.10.1":
+        dut_ipv6 = input("Enter DuT IPv6 address: ")
 
     ssh_user = None
     ssh_password = None
@@ -34,7 +39,8 @@ def run(
         section=section,
         ssh_user=ssh_user,
         ssh_ip=dut_ip,
-        ssh_password=ssh_password
+        ssh_password=ssh_password,
+        ssh_ipv6=dut_ipv6
     )
 
     engine.start()

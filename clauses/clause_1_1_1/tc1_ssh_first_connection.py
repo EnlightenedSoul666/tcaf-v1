@@ -26,10 +26,6 @@ class TC1SSHFirstConnection(TestCase):
 
         ssh_cmd = f"ssh -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa {context.ssh_user}@{context.ssh_ip}"
 
-        tm = context.terminal_manager
-
-        tm.create_terminal("tester")
-
         StepRunner([
             PcapStartStep(interface="eth0", filename="tc1_ssh_auth.pcapng"),
             CommandStep("tester", ssh_cmd)

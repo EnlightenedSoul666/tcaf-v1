@@ -2,7 +2,7 @@ from utils.logger import logger
 from runtime.context import RuntimeContext
 from core.clause_runner import ClauseRunner
 from terminal.manager import TerminalManager
-from reporting.pdf_generator import PDFGenerator
+from reporting.pdf_generator import DOCXGenerator
 
 class Engine:
 
@@ -44,11 +44,11 @@ class Engine:
             logger.info(f"{tc.name} → {tc.status}")
 
         # Generate PDF report
-        reporter = PDFGenerator(self.context.evidence.run_dir)
+        reporter = DOCXGenerator(self.context.evidence.run_dir)
 
         report_file = reporter.generate(self.context, results)
 
-        logger.info(f"PDF report generated: {report_file}")
+        logger.info(f"DOCX report generated: {report_file}")
 
     def initialize_runtime(self):
 

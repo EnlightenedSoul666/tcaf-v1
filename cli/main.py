@@ -29,7 +29,7 @@ def run(
     ssh_password = None
 
     # Only ask for SSH credentials for SSH-based clauses
-    NON_SSH_CLAUSES = {"1.10.1"}
+    NON_SSH_CLAUSES = {"1.10.1", "1.9.2"}
     if clause not in NON_SSH_CLAUSES:
         ssh_user = input("Enter SSH username: ")
         ssh_password = input("Enter SSH password: ")
@@ -38,9 +38,9 @@ def run(
         clause=clause,
         section=section,
         ssh_user=ssh_user,
-        ssh_ip=dut_ip,
+        dut_ip=dut_ip,
         ssh_password=ssh_password,
-        ssh_ipv6=dut_ipv6
+        dut_ipv6=dut_ipv6
     )
 
     engine.start()

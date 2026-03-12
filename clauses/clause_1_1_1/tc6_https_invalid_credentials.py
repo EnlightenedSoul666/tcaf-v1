@@ -16,7 +16,7 @@ class TC6HTTPSInvalidLogin(TestCase):
 
     def run(self, context):
 
-        url = f"https://{context.ssh_ip}"
+        url = f"https://{context.dut_ip}"
 
         StepRunner([
             OpenURLStep(url),

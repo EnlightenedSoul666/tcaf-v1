@@ -172,7 +172,7 @@ class Clause111Report:
             ("Device",           context.dut_model),
             ("Serial Number",    context.dut_serial),
             ("Firmware Version", context.dut_firmware),
-            ("DUT IP Address",   context.ssh_ip),
+            ("DUT IP Address",   context.dut_ip),
         ]
 
         table = doc.add_table(rows=len(rows_data) + 1, cols=2)

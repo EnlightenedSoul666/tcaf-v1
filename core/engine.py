@@ -6,15 +6,15 @@ from reporting.pdf_generator import DOCXGenerator
 
 class Engine:
 
-    def __init__(self, clause=None, section=None, ssh_user=None, ssh_ip=None, ssh_password=None, ssh_ipv6=None):
+    def __init__(self, clause=None, section=None, ssh_user=None, dut_ip=None, ssh_password=None, dut_ipv6=None):
 
         self.context = RuntimeContext(
             clause=clause,
             section=section,
             ssh_user=ssh_user,
-            ssh_ip=ssh_ip,
+            dut_ip=dut_ip,
             ssh_password=ssh_password,
-            ssh_ipv6=ssh_ipv6
+            dut_ipv6=dut_ipv6
         )
 
         logger.info("Engine initialized")

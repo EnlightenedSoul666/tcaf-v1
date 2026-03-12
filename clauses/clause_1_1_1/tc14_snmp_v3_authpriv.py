@@ -21,7 +21,7 @@ class TC9SNMPv3AuthPriv(TestCase):
             f"-l authPriv "
             f"-a SHA -A {context.snmp_auth_pass} "
             f"-x AES -X {context.snmp_priv_pass} "
-            f"{context.ssh_ip}"
+            f"{context.dut_ip}"
         )
 
         tm = context.terminal_manager

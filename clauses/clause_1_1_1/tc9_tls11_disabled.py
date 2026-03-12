@@ -16,7 +16,7 @@ class TC9TLS11Disabled(TestCase):
 
     def run(self, context):
 
-        cmd = f"openssl s_client -connect {context.ssh_ip}:443 -tls1_1"
+        cmd = f"openssl s_client -connect {context.dut_ip}:443 -tls1_1"
 
         StepRunner([
             # SessionResetStep("tester"),

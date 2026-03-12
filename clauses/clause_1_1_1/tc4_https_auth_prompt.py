@@ -14,7 +14,7 @@ class TC4HTTPSAuthPrompt(TestCase):
 
     def run(self, context):
 
-        url = f"http://{context.ssh_ip}/dvwa/login.php"
+        url = f"http://{context.dut_ip}/dvwa/login.php"
 
         StepRunner([
             OpenURLStep(url),

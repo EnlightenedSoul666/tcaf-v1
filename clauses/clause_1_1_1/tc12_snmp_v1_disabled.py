@@ -15,7 +15,7 @@ class TC7SNMPv1Disabled(TestCase):
 
     def run(self, context):
 
-        cmd = f"snmpwalk -v1 -c public {context.ssh_ip}"
+        cmd = f"snmpwalk -v1 -c public {context.dut_ip}"
 
         tm = context.terminal_manager
 

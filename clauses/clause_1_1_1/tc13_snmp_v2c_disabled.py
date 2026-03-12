@@ -15,7 +15,7 @@ class TC8SNMPv2Disabled(TestCase):
 
     def run(self, context):
 
-        cmd = f"snmpwalk -v2c -c public {context.ssh_ip}"
+        cmd = f"snmpwalk -v2c -c public {context.dut_ip}"
 
         tm = context.terminal_manager
 

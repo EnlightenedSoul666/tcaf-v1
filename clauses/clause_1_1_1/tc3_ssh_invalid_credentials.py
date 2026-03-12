@@ -21,7 +21,7 @@ class TC3SSHInvalidCredentials(TestCase):
 
     def run(self, context):
 
-        ssh_cmd = f"ssh -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa {context.ssh_user}@{context.ssh_ip}"
+        ssh_cmd = f"ssh -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa {context.ssh_user}@{context.dut_ip}"
 
         tm = context.terminal_manager
 

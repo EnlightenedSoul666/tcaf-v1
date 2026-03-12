@@ -21,7 +21,7 @@ class TC1ICMPIPv4(TestCase):
         print(f"\n--- Running {self.name} ---")
 
         # Use DuT IP from CLI context (no duplicate input() prompt)
-        ipv4_target = context.ssh_ip
+        ipv4_target = context.dut_ip
 
         if not ipv4_target:
             print("[-] No IPv4 address provided. Skipping test case.")

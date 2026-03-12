@@ -304,7 +304,7 @@ class DOCXGenerator:
             ("Device",           getattr(context, "dut_model",    "N/A")),
             ("Serial Number",    getattr(context, "dut_serial",   "N/A")),
             ("Firmware Version", getattr(context, "dut_firmware", "N/A")),
-            ("DUT IP Address",   getattr(context, "ssh_ip",       "N/A")),
+            ("DUT IP Address",   getattr(context, "dut_ip",       "N/A")),
         ]
 
         table = doc.add_table(rows=len(rows_data) + 1, cols=2)
@@ -1078,7 +1078,7 @@ class DOCXGenerator:
         Generate the full ITSAR compliance report.
 
         Required:
-            context  – object with dut_model, dut_serial, dut_firmware, ssh_ip,
+            context  – object with dut_model, dut_serial, dut_firmware, dut_ip,
                        itsar_section, itsar_requirement
             results  – list of objects with .name, .description, .status, .evidence,
                        optionally .remarks

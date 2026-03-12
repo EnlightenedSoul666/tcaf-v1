@@ -17,7 +17,7 @@ class TC7SSHv1Disabled(TestCase):
 
     def run(self, context):
 
-        ssh_cmd = f"ssh -1 {context.ssh_user}@{context.ssh_ip}"
+        ssh_cmd = f"ssh -1 {context.ssh_user}@{context.dut_ip}"
 
         StepRunner([
             ClearTerminalStep("tester"),

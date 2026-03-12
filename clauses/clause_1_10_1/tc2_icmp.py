@@ -21,7 +21,7 @@ class TC2ICMPIPv6(TestCase):
         print(f"\n--- Running {self.name} ---")
 
         # Use IPv6 from CLI context (asked upfront with IPv4)
-        ipv6_target = context.ssh_ipv6
+        ipv6_target = context.dut_ipv6
 
         if not ipv6_target:
             print("[-] No IPv6 address provided. Skipping test case.")

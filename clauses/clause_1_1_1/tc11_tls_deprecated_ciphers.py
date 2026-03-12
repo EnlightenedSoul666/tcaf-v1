@@ -15,7 +15,7 @@ class TC11TLSDeprecatedCiphers(TestCase):
 
     def run(self, context):
 
-        cmd = f"nmap --script ssl-enum-ciphers -p 443 {context.ssh_ip}"
+        cmd = f"nmap --script ssl-enum-ciphers -p 443 {context.dut_ip}"
 
         StepRunner([
             # SessionResetStep("tester"),

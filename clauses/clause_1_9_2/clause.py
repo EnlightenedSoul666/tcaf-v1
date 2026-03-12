@@ -6,6 +6,9 @@ from .tc3_sctp_scan import TC3SCTPScan
 
 class Clause_1_9_2(BaseClause):
 
+    REQUIRES_SSH  = False
+    REQUIRES_IPV6 = False
+
     def __init__(self, context):
         super().__init__(context)
         self.add_testcase(TC1TCPScan())

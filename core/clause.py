@@ -1,5 +1,9 @@
 class BaseClause:
 
+    # Subclasses declare what credentials/info they need
+    REQUIRES_SSH  = False
+    REQUIRES_IPV6 = False
+
     def __init__(self, context):
 
         self.context = context

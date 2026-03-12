@@ -5,6 +5,9 @@ from clauses.clause_1_10_1.tc2_icmp import TC2ICMPIPv6
 
 class Clause_1_10_1(BaseClause):
 
+    REQUIRES_SSH  = False
+    REQUIRES_IPV6 = True
+
     def __init__(self, context):
         super().__init__(context)
         self.add_testcase(TC1ICMPIPv4())

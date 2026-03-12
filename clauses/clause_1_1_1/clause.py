@@ -13,6 +13,9 @@ from .tc14_snmp_v3_authpriv import TC9SNMPv3AuthPriv
 
 class Clause_1_1_1(BaseClause):
 
+    REQUIRES_SSH  = True
+    REQUIRES_IPV6 = False
+
     def __init__(self, context):
 
         super().__init__(context)

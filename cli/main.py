@@ -2,6 +2,7 @@ import typer
 from config.settings import initialize_directories
 from utils.logger import logger
 from core.engine import Engine
+from clauses.registry import CLAUSE_REGISTRY
 
 
 app = typer.Typer(
@@ -20,17 +21,16 @@ def run(
     # Always ask for DuT IP (needed by all clauses)
     dut_ip = input("Enter DuT IP address: ")
 
-    # Ask for IPv6 if running clause 1.10.1 (for TC2)
+    # Look up what this clause needs from its class declaration
+    clause_class = CLAUSE_REGISTRY.get(clause)
+
     dut_ipv6 = None
-    if clause == "1.10.1":
+    if clause_class and clause_class.REQUIRES_IPV6:
         dut_ipv6 = input("Enter DuT IPv6 address: ")
 
     ssh_user = None
     ssh_password = None
-
-    # Only ask for SSH credentials for SSH-based clauses
-    NON_SSH_CLAUSES = {"1.10.1", "1.9.2"}
-    if clause not in NON_SSH_CLAUSES:
+    if clause_class and clause_class.REQUIRES_SSH:
         ssh_user = input("Enter SSH username: ")
         ssh_password = input("Enter SSH password: ")
 

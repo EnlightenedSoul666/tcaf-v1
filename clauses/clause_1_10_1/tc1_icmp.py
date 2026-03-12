@@ -36,12 +36,19 @@ class TC1ICMPIPv4(TestCase):
         # 1. Start PCAP
         StepRunner([PcapStartStep(interface="eth0", filename="icmp_ipv4.pcapng")]).run(context)
 
-        # 2. Fire the IPv4 payload
+        # 2. Cache sudo credentials before running icmp_forge
+        StepRunner([CommandStep("tester", "sudo -v")]).run(context)
+        time.sleep(3)  # Allow time for sudo password entry in tmux
+
+        # 3. Fire the IPv4 payload
         cmd = f"sudo python3 clauses/clause_1_10_1/icmp_forge.py --logfile {custom_log_file} --ipv4 {ipv4_target}"
         StepRunner([CommandStep("tester", "clear")]).run(context)
         StepRunner([CommandStep("tester", cmd)]).run(context)
 
-        # 3. Stop PCAP
+        # 4. Wait for icmp_forge.py to finish sending all packets
+        time.sleep(15)
+
+        # 5. Stop PCAP
         StepRunner([PcapStopStep()]).run(context)
 
         # ---------------------------------------------------------
@@ -97,5 +104,22 @@ class TC1ICMPIPv4(TestCase):
             else:
                 print(f"[*] No matching packets found for Type {req_type}. (Silent Drop successful). Skipping Wireshark.")
 
-        self.status = "PASS"
+        # Validate: if pcap has 0 packets, warn that test may be invalid
+        check_cmd = f"tshark -r {pcap_path} | wc -l"
+        StepRunner([CommandStep("tester", check_cmd)]).run(context)
+        time.sleep(1)
+        output = context.terminal_manager.capture_output("tester")
+        try:
+            pkt_count = int(output.strip().split('\n')[-1].strip())
+        except (ValueError, IndexError):
+            pkt_count = -1
+
+        if pkt_count == 0:
+            print("[⚠] WARNING: 0 packets captured! ICMP packets may not have been sent.")
+            print("[⚠] Ensure sudo works without password prompt in tmux.")
+            print("[⚠] Run: sudo visudo → add: paine ALL=(ALL) NOPASSWD: /usr/bin/python3")
+            self.status = "INCONCLUSIVE"
+        else:
+            self.status = "PASS"
+
         return self

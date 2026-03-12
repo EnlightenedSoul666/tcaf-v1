@@ -21,6 +21,9 @@ def setup_logger():
         "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s"
     )
 
+    # Create logs directory if it doesn't exist
+    settings.LOG_DIR.mkdir(parents=True, exist_ok=True)
+
     # File handler
     file_handler = logging.FileHandler(log_file)
     file_handler.setFormatter(formatter)

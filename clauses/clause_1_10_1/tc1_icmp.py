@@ -95,12 +95,15 @@ class TC1ICMPIPv4(TestCase):
             # ---------------------------------------------------------
             # THE WIRESHARK GUI PROOF
             # ---------------------------------------------------------
-            # 4a. Run tshark in the background to grab frame numbers
+            # 4a. Check if any packets match this filter
             StepRunner([AnalyzePcapStep(filter_expr=tshark_filter)]).run(context)
 
-            # 4b. Use the Wireshark step if we found matching frames
+            # 4b. Open Wireshark with the FULL display filter (shows request + response pairs)
             if context.matched_frame:
-                StepRunner([WiresharkPacketScreenshotStep(suffix=f"ipv4_type_{req_type}")]).run(context)
+                StepRunner([WiresharkPacketScreenshotStep(
+                    suffix=f"ipv4_type_{req_type}",
+                    display_filter=tshark_filter
+                )]).run(context)
             else:
                 print(f"[*] No matching packets found for Type {req_type}. (Silent Drop successful). Skipping Wireshark.")
 

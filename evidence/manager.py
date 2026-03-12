@@ -18,7 +18,8 @@ class EvidenceManager:
         else:
             tc_name = str(testcase)
 
-        path = os.path.join(self.run_dir, str(clause), tc_name)
+        # Timestamp subfolder: output/{clause}/{testcase}/{timestamp}/
+        path = os.path.join(self.run_dir, str(clause), tc_name, self.date_prefix)
         os.makedirs(os.path.join(path, "screenshots"), exist_ok=True)
         os.makedirs(os.path.join(path, "pcap"), exist_ok=True)
         os.makedirs(os.path.join(path, "logs"), exist_ok=True)

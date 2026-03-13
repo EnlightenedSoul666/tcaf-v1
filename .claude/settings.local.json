@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la \"/c/Users/Skiv Kylash V/Downloads/tcaf-v1-main \\(1\\)/\")",
+      "Bash(ls -la \"/c/Users/Skiv Kylash V/Downloads/tcaf-v1-main \\(1\\)/tcaf-v1-main/steps/\")",
+      "Bash(ls -la \"/c/Users/Skiv Kylash V/Downloads/tcaf-v1-main \\(1\\)/tcaf-v1-main/\")",
+      "Bash(xxd)",
+      "Bash(git add .gitignore clauses/registry.py cli/main.py config/settings.py core/engine.py core/testcase.py evidence/manager.py requirements.txt steps/analyze_pcap_step.py steps/pcap_start_step.py steps/screenshot_step.py steps/wireshark_packet_screenshot_step.py clauses/clause_1_10_1/clause.py clauses/clause_1_10_1/icmp_forge.py clauses/clause_1_10_1/tc1_icmp.py clauses/clause_1_10_1/tc2_icmp.py)",
+      "Bash(git commit:*)",
+      "Bash(git remote add fork https://github.com/EnlightenedSoul666/tcaf-v1.git)",
+      "Bash(git push -u fork claude/interesting-wu)",
+      "Read(//tmp/**)",
+      "Bash(find . -name *1*1*1* -o -name *clause_1_1_1*)",
+      "Bash(grep -h \"^from\\\\|^import\" clauses/clause_1_1_1/*.py)",
+      "Bash(grep -v '^$')",
+      "Bash(grep -r \"selenium\\\\|from selenium\" /tmp/tcaf-v1-merged --include=*.py)",
+      "Bash(grep -E \"\\\\.\\(py|txt\\)$\")",
+      "Bash(git push:*)",
+      "Bash(git pull:*)",
+      "Bash(for commit:*)",
+      "Bash(do echo:*)",
+      "Bash(ls steps/*.py)",
+      "Bash(grep \"^class TC\" clauses/clause_1_10_1/tc*.py)",
+      "Bash(grep -n \"return \" steps/*.py)",
+      "Bash(grep -v \"return$\\\\|__pycache__\\\\|raise\\\\|return None\\\\|return self\")",
+      "Bash(git add:*)",
+      "Bash(grep -l \"ssh_ip\" *.py)",
+      "Bash(cd /c/Users/\"Skiv Kylash V\"/Downloads/tcaf-v1/.claude/worktrees/interesting-wu)",
+      "Bash(python3:*)",
+      "Bash(pdftotext \"C:/Users/Skiv Kylash V/Downloads/ITSAR402122401.pdf\" -)",
+      "Bash(python -m py_compile clauses/clause_1_9_2/tc1_tcp_scan.py clauses/clause_1_9_2/tc2_udp_scan.py clauses/clause_1_9_2/tc3_sctp_scan.py)"
+    ]
+  }
+}

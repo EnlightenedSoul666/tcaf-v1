@@ -80,10 +80,11 @@ class TC3SCTPScan(TestCase):
         # ---------------------------------------------------------
         for port_info in open_ports:
             port = port_info["port"]
+            service = port_info["service"]
 
             # Clear and display header
             StepRunner([CommandStep("tester", "clear")]).run(context)
-            header_cmd = f"echo -e '\\n=== SCTP Port {port} ({port_info[\"service\"]}) ==='"
+            header_cmd = f"echo -e '\\n=== SCTP Port {port} ({service}) ==='"
             StepRunner([CommandStep("tester", header_cmd)]).run(context)
 
             # tshark filter: show SCTP INIT sent + INIT-ACK response pair

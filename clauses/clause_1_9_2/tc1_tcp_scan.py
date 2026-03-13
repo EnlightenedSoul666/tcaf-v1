@@ -6,7 +6,7 @@ from steps.command_step import CommandStep
 from steps.screenshot_step import ScreenshotStep
 from steps.wireshark_packet_screenshot_step import WiresharkPacketScreenshotStep
 from steps.analyze_pcap_step import AnalyzePcapStep
-from .nmap_parser import parse_open_ports
+from .nmap_parser import parse_open_ports, parse_pcap_for_responses, merge_port_lists
 from datetime import datetime
 import os
 import time
@@ -39,19 +39,26 @@ class TC1TCPScan(TestCase):
         StepRunner([CommandStep("tester", "sudo -v")]).run(context)
         time.sleep(3)
 
-        # 3. Run nmap TCP SYN scan: all ports, no DNS, no ping
-        nmap_cmd = f"sudo nmap -sS -p- -Pn -n -T4 {dut_ip} | tee {log_file}"
+        # 3. Run nmap TCP SYN scan: HYPER-AGGRESSIVE (max speed, don't care about timeouts)
+        nmap_cmd = (
+            f"sudo nmap -sS -p- -Pn -n -T5 --min-rate=10000 --max-retries=0 "
+            f"--initial-rtt-timeout=50ms {dut_ip} | tee {log_file}"
+        )
         StepRunner([CommandStep("tester", "clear")]).run(context)
         StepRunner([CommandStep("tester", nmap_cmd)]).run(context)
 
-        # 4. Wait for nmap to complete (full port scan takes time)
-        print("[*] Waiting for TCP SYN scan to complete (this may take a few minutes)...")
-        time.sleep(120)  # 2 minutes for full TCP scan with -T4
+        # 4. Wait for nmap to complete (hyper-aggressive, faster)
+        print("[*] Waiting for TCP SYN scan to complete...")
+        time.sleep(90)  # 90 seconds for aggressive TCP scan
 
         # 5. Take screenshot of nmap results
         StepRunner([ScreenshotStep(terminal="tester", suffix="tcp_scan_results")]).run(context)
 
-        # 6. Stop PCAP
+        # 6. WAIT LONGER to capture late responses before stopping PCAP
+        print("[*] Waiting 30 seconds for late TCP responses to arrive...")
+        time.sleep(30)
+
+        # 7. Stop PCAP
         StepRunner([PcapStopStep()]).run(context)
 
         # 7. Capture nmap output to parse open ports
@@ -65,15 +72,24 @@ class TC1TCPScan(TestCase):
         except Exception:
             pass
 
-        open_ports = parse_open_ports(output)
+        # Parse both nmap output AND PCAP
+        nmap_ports = parse_open_ports(output)
         pcap_path = context.pcap_file
+        pcap_ports = parse_pcap_for_responses(pcap_path, dut_ip, proto="tcp")
 
-        if not open_ports:
-            print("[*] No open TCP ports found.")
+        # Merge: prefer nmap's service names, add any ports only in PCAP
+        open_ports = merge_port_lists(nmap_ports, pcap_ports)
+
+        if nmap_ports:
+            print(f"[+] nmap found {len(nmap_ports)} TCP ports")
+        if pcap_ports:
+            print(f"[+] PCAP analysis found {len(pcap_ports)} additional/late responses")
+        if open_ports:
+            print(f"[+] Total: {len(open_ports)} open TCP ports. Capturing Wireshark evidence...")
+        else:
+            print("[*] No open TCP ports found (nmap or PCAP).")
             self.status = "PASS"
             return self
-
-        print(f"[+] Found {len(open_ports)} open TCP ports. Capturing Wireshark evidence...")
 
         # ---------------------------------------------------------
         # WIRESHARK PROOF FOR EACH OPEN PORT

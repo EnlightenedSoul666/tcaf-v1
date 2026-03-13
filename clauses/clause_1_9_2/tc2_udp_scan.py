@@ -6,7 +6,7 @@ from steps.command_step import CommandStep
 from steps.screenshot_step import ScreenshotStep
 from steps.wireshark_packet_screenshot_step import WiresharkPacketScreenshotStep
 from steps.analyze_pcap_step import AnalyzePcapStep
-from .nmap_parser import parse_open_ports
+from .nmap_parser import parse_open_ports, parse_pcap_for_responses, merge_port_lists
 from datetime import datetime
 import os
 import time
@@ -39,19 +39,27 @@ class TC2UDPScan(TestCase):
         StepRunner([CommandStep("tester", "sudo -v")]).run(context)
         time.sleep(3)
 
-        # 3. Run nmap UDP scan: all ports, no DNS, no ping
-        nmap_cmd = f"sudo nmap -sU -p- -Pn -n -T4 {dut_ip} | tee {log_file}"
+        # 3. Run nmap UDP scan: HYPER-AGGRESSIVE (max speed, don't care about timeouts)
+        # We'll capture late responses via PCAP analysis
+        nmap_cmd = (
+            f"sudo nmap -sU -p- -Pn -n -T5 --min-rate=10000 --max-retries=0 "
+            f"--initial-rtt-timeout=50ms {dut_ip} | tee {log_file}"
+        )
         StepRunner([CommandStep("tester", "clear")]).run(context)
         StepRunner([CommandStep("tester", nmap_cmd)]).run(context)
 
-        # 4. Wait for nmap to complete (UDP scans are much slower)
-        print("[*] Waiting for UDP scan to complete (this may take several minutes)...")
-        time.sleep(300)  # 5 minutes for full UDP scan
+        # 4. Wait for nmap to complete (hyper-aggressive, should finish faster)
+        print("[*] Waiting for UDP scan to complete...")
+        time.sleep(180)  # 3 minutes for aggressive UDP scan
 
         # 5. Take screenshot of nmap results
         StepRunner([ScreenshotStep(terminal="tester", suffix="udp_scan_results")]).run(context)
 
-        # 6. Stop PCAP
+        # 6. WAIT LONGER to capture late responses before stopping PCAP
+        print("[*] Waiting 60 seconds for late UDP responses to arrive...")
+        time.sleep(60)
+
+        # 7. Stop PCAP
         StepRunner([PcapStopStep()]).run(context)
 
         # 7. Capture nmap output to parse open ports
@@ -65,15 +73,24 @@ class TC2UDPScan(TestCase):
         except Exception:
             pass
 
-        open_ports = parse_open_ports(output)
+        # Parse both nmap output AND PCAP
+        nmap_ports = parse_open_ports(output)
         pcap_path = context.pcap_file
+        pcap_ports = parse_pcap_for_responses(pcap_path, dut_ip, proto="udp")
 
-        if not open_ports:
-            print("[*] No open UDP ports found.")
+        # Merge: prefer nmap's service names, add any ports only in PCAP
+        open_ports = merge_port_lists(nmap_ports, pcap_ports)
+
+        if nmap_ports:
+            print(f"[+] nmap found {len(nmap_ports)} UDP ports")
+        if pcap_ports:
+            print(f"[+] PCAP analysis found {len(pcap_ports)} additional/late responses")
+        if open_ports:
+            print(f"[+] Total: {len(open_ports)} open UDP ports. Capturing Wireshark evidence...")
+        else:
+            print("[*] No open UDP ports found (nmap or PCAP).")
             self.status = "PASS"
             return self
-
-        print(f"[+] Found {len(open_ports)} open UDP ports. Capturing Wireshark evidence...")
 
         # ---------------------------------------------------------
         # WIRESHARK PROOF FOR EACH OPEN PORT

@@ -115,8 +115,8 @@ class BaseReport:
     # SCREENSHOT EVIDENCE BLOCK (master.py style)
     # ─────────────────────────────────────────
     def add_screenshot_block(self, doc, title, image_path):
-        TABLE_WIDTH = Inches(7.8)
-        IMAGE_WIDTH = Inches(6.2)
+        TABLE_WIDTH = Inches(6.0)
+        IMAGE_WIDTH = Inches(5.4)
 
         table = doc.add_table(rows=2, cols=1)
         table.alignment     = WD_TABLE_ALIGNMENT.CENTER

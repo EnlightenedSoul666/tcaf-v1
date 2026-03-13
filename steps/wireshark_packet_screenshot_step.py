@@ -40,12 +40,23 @@ class WiresharkPacketScreenshotStep(Step):
             "-Y", ws_filter
         ])
 
-        # Wait for Wireshark to fully load
-        time.sleep(4)
+        # Wait for Wireshark to fully load and apply filter on large PCAPs
+        time.sleep(8)
+
+        # Activate the Wireshark window before going fullscreen
+        subprocess.run(["xdotool", "search", "--name", "Wireshark"], capture_output=True)
+        try:
+            ws_wid = subprocess.check_output(
+                ["xdotool", "search", "--name", "Wireshark"]
+            ).decode().strip().split("\n")[-1]
+            subprocess.run(["xdotool", "windowactivate", ws_wid])
+            time.sleep(0.5)
+        except Exception:
+            pass  # Fall through to F11 anyway
 
         # Fullscreen before capture
         subprocess.run(["xdotool", "key", "F11"])
-        time.sleep(0.5)
+        time.sleep(1)
 
         # Take screenshot
         subprocess.run(["scrot", screenshot_file])

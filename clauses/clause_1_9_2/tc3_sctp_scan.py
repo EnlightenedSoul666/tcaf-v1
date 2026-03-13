@@ -112,7 +112,7 @@ class TC3SCTPScan(TestCase):
             # Run tshark visibly in terminal
             tshark_cmd = f"tshark -r {pcap_path} -Y '{tshark_filter}'"
             StepRunner([CommandStep("tester", tshark_cmd)]).run(context)
-            time.sleep(1)
+            time.sleep(3)  # Wait for tshark to process large PCAP and display results
 
             # Take terminal screenshot
             StepRunner([ScreenshotStep(terminal="tester", suffix=f"sctp_port_{port}")]).run(context)

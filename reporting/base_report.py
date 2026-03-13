@@ -115,14 +115,21 @@ class BaseReport:
     # SCREENSHOT EVIDENCE BLOCK (master.py style)
     # ─────────────────────────────────────────
     def add_screenshot_block(self, doc, title, image_path):
-        TABLE_WIDTH = Inches(6.0)
-        IMAGE_WIDTH = Inches(5.4)
+        TABLE_WIDTH = Inches(5.5)
+        IMAGE_WIDTH = Inches(5.0)
 
         table = doc.add_table(rows=2, cols=1)
         table.alignment     = WD_TABLE_ALIGNMENT.CENTER
         table.allow_autofit = False
 
         self.prevent_table_row_split(table)
+
+        # Set explicit table width via XML to prevent overflow
+        tblPr = table._tbl.tblPr
+        tblW = OxmlElement("w:tblW")
+        tblW.set(qn("w:w"), str(int(TABLE_WIDTH.emu / 635)))  # EMU to twips
+        tblW.set(qn("w:type"), "dxa")
+        tblPr.append(tblW)
 
         table.columns[0].width = TABLE_WIDTH
         for row in table.rows:
@@ -134,10 +141,16 @@ class BaseReport:
             shd.set(qn("w:fill"), LIGHT_PURPLE)
             tcPr.append(shd)
 
-            cell.top_margin    = Inches(0.2)
-            cell.bottom_margin = Inches(0.2)
-            cell.left_margin   = Inches(0.3)
-            cell.right_margin  = Inches(0.3)
+            # Constrain cell width explicitly
+            tcW = OxmlElement("w:tcW")
+            tcW.set(qn("w:w"), str(int(TABLE_WIDTH.emu / 635)))
+            tcW.set(qn("w:type"), "dxa")
+            tcPr.append(tcW)
+
+            cell.top_margin    = Inches(0.15)
+            cell.bottom_margin = Inches(0.15)
+            cell.left_margin   = Inches(0.2)
+            cell.right_margin  = Inches(0.2)
 
         # title cell
         title_cell = table.cell(0, 0)

@@ -54,9 +54,9 @@ class TC3SCTPScan(TestCase):
         # 5. Take screenshot of nmap results
         StepRunner([ScreenshotStep(terminal="tester", suffix="sctp_scan_results")]).run(context)
 
-        # 6. WAIT LONGER to capture late responses before stopping PCAP
-        print("[*] Waiting 45 seconds for late SCTP responses to arrive...")
-        time.sleep(45)
+        # 6. WAIT for late responses before stopping PCAP
+        print("[*] Waiting 15 seconds for late SCTP responses to arrive...")
+        time.sleep(15)
 
         # 7. Stop PCAP
         StepRunner([PcapStopStep()]).run(context)
@@ -103,10 +103,10 @@ class TC3SCTPScan(TestCase):
             header_cmd = f"echo -e '\\n=== SCTP Port {port} ({service}) ==='"
             StepRunner([CommandStep("tester", header_cmd)]).run(context)
 
-            # tshark filter: show SCTP INIT sent + INIT-ACK response pair
+            # tshark filter: show SCTP INIT sent + INIT-ACK response pair (exclude ICMP rejects)
             tshark_filter = (
                 f"(ip.dst == {dut_ip} and sctp.dstport == {port}) or "
-                f"(ip.src == {dut_ip} and sctp.srcport == {port})"
+                f"(ip.src == {dut_ip} and sctp.srcport == {port} and not icmp)"
             )
 
             # Run tshark visibly in terminal

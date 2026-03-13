@@ -55,9 +55,9 @@ class TC2UDPScan(TestCase):
         # 5. Take screenshot of nmap results
         StepRunner([ScreenshotStep(terminal="tester", suffix="udp_scan_results")]).run(context)
 
-        # 6. WAIT LONGER to capture late responses before stopping PCAP
-        print("[*] Waiting 60 seconds for late UDP responses to arrive...")
-        time.sleep(60)
+        # 6. WAIT for late responses before stopping PCAP
+        print("[*] Waiting 15 seconds for late UDP responses to arrive...")
+        time.sleep(15)
 
         # 7. Stop PCAP
         StepRunner([PcapStopStep()]).run(context)
@@ -104,10 +104,10 @@ class TC2UDPScan(TestCase):
             header_cmd = f"echo -e '\\n=== UDP Port {port} ({service}) ==='"
             StepRunner([CommandStep("tester", header_cmd)]).run(context)
 
-            # tshark filter: show UDP probe sent + response from DuT
+            # tshark filter: show UDP probe sent + genuine response from DuT (exclude ICMP rejects)
             tshark_filter = (
                 f"(ip.dst == {dut_ip} and udp.dstport == {port}) or "
-                f"(ip.src == {dut_ip} and udp.srcport == {port})"
+                f"(ip.src == {dut_ip} and udp.srcport == {port} and not icmp)"
             )
 
             # Run tshark visibly in terminal

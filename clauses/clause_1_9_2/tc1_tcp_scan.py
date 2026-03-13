@@ -54,9 +54,9 @@ class TC1TCPScan(TestCase):
         # 5. Take screenshot of nmap results
         StepRunner([ScreenshotStep(terminal="tester", suffix="tcp_scan_results")]).run(context)
 
-        # 6. WAIT LONGER to capture late responses before stopping PCAP
-        print("[*] Waiting 30 seconds for late TCP responses to arrive...")
-        time.sleep(30)
+        # 6. WAIT for late responses before stopping PCAP
+        print("[*] Waiting 15 seconds for late TCP responses to arrive...")
+        time.sleep(15)
 
         # 7. Stop PCAP
         StepRunner([PcapStopStep()]).run(context)

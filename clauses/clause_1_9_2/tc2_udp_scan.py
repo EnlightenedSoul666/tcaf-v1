@@ -39,11 +39,10 @@ class TC2UDPScan(TestCase):
         StepRunner([CommandStep("tester", "sudo -v")]).run(context)
         time.sleep(3)
 
-        # 3. Run nmap UDP scan: HYPER-AGGRESSIVE (max speed, don't care about timeouts)
-        # We'll capture late responses via PCAP analysis
+        # 3. Run nmap UDP scan: SINGLE PROBE PER PORT (no retries)
         nmap_cmd = (
-            f"sudo nmap -sU -p- -Pn -n -T5 --min-rate=10000 --max-retries=0 "
-            f"--initial-rtt-timeout=50ms {dut_ip} | tee {log_file}"
+            f"sudo nmap -sU -p- -Pn -n -T5 --max-retries=0 "
+            f"--initial-rtt-timeout=100ms --script-timeout=1ms {dut_ip} | tee {log_file}"
         )
         StepRunner([CommandStep("tester", "clear")]).run(context)
         StepRunner([CommandStep("tester", nmap_cmd)]).run(context)

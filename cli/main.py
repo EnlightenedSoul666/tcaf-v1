@@ -1,4 +1,5 @@
 import typer
+import getpass
 from config.settings import initialize_directories
 from utils.logger import logger
 from core.engine import Engine
@@ -32,7 +33,19 @@ def run(
     ssh_password = None
     if clause_class and clause_class.REQUIRES_SSH:
         ssh_user = input("Enter SSH username: ")
-        ssh_password = input("Enter SSH password: ")
+        ssh_password = getpass.getpass("Enter SSH password: ")
+
+    sudo_password = None
+    if clause_class and clause_class.REQUIRES_SUDO:
+        sudo_password = getpass.getpass("Enter sudo password (for Kali): ")
+
+    openwrt_ip = None
+    openwrt_ipv6 = None
+    openwrt_password = None
+    if clause_class and clause_class.REQUIRES_OPENWRT:
+        openwrt_ip = input("Enter OpenWRT IP address: ")
+        openwrt_ipv6 = input("Enter OpenWRT IPv6 address: ")
+        openwrt_password = getpass.getpass("Enter OpenWRT root password: ")
 
     engine = Engine(
         clause=clause,
@@ -40,7 +53,11 @@ def run(
         ssh_user=ssh_user,
         dut_ip=dut_ip,
         ssh_password=ssh_password,
-        dut_ipv6=dut_ipv6
+        dut_ipv6=dut_ipv6,
+        sudo_password=sudo_password,
+        openwrt_ip=openwrt_ip,
+        openwrt_ipv6=openwrt_ipv6,
+        openwrt_password=openwrt_password,
     )
 
     engine.start()

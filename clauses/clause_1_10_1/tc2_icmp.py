@@ -1,131 +1,98 @@
 from core.testcase import TestCase
-from core.step_runner import StepRunner
-from steps.pcap_start_step import PcapStartStep
-from steps.pcap_stop_step import PcapStopStep
-from steps.command_step import CommandStep
-from steps.screenshot_step import ScreenshotStep
-from steps.wireshark_packet_screenshot_step import WiresharkPacketScreenshotStep
-from steps.analyze_pcap_step import AnalyzePcapStep
+from clauses.clause_1_10_1.icmp_helpers import (
+    run_capture_cycle, run_screenshot_loop, validate_pcap,
+    run_send_capture_cycle, run_send_screenshot_loop, check_not_permitted_send
+)
 from datetime import datetime
 import os
-import time
 
 
 class TC2ICMPIPv6(TestCase):
     def __init__(self):
-        super().__init__("TC2_ICMP_IPV6", "IPv6 ICMP type filtering compliance test")
+        super().__init__("TC2_ICMP_IPV6", "IPv6 ICMP type filtering compliance test (Respond + Send)")
 
     def run(self, context):
         context.current_testcase = self
-
         print(f"\n--- Running {self.name} ---")
 
-        # Use IPv6 from CLI context (asked upfront with IPv4)
         ipv6_target = context.dut_ipv6
-
         if not ipv6_target:
             print("[-] No IPv6 address provided. Skipping test case.")
             self.status = "SKIPPED"
             return self
 
-        # Setup logging
+        # Setup log path
         path = context.evidence.testcase_dir(context.clause, self)
         timestamp = datetime.now().strftime("%Y_%m_%d_%H-%M-%S")
-        custom_log_file = os.path.join(path, "logs", f"{timestamp}_icmp_ipv6.txt")
+        log_file = os.path.join(path, "logs", f"{timestamp}_icmp_ipv6.txt")
 
-        # 1. Start PCAP
-        StepRunner([PcapStartStep(interface="eth0", filename="icmp_ipv6.pcapng")]).run(context)
+        # ===================================================================
+        # PART 1: RESPOND-TO TESTS (We send ICMP to DuT, check response)
+        # ===================================================================
+        print("\n[=== PART 1: RESPOND-TO TESTS (IPv6) ===]")
 
-        # 2. Cache sudo credentials before running icmp_forge
-        StepRunner([CommandStep("tester", "sudo -v")]).run(context)
-        time.sleep(3)  # Allow time for sudo password entry in tmux
+        # Run PCAP capture cycle (send ICMP via icmp_forge.py)
+        run_capture_cycle(context, "--ipv6", ipv6_target, "icmp_ipv6_respond.pcapng", log_file)
 
-        # 3. Fire the IPv6 payload
-        cmd = f"sudo python3 clauses/clause_1_10_1/icmp_forge.py --logfile {custom_log_file} --ipv6 {ipv6_target}"
-        StepRunner([CommandStep("tester", "clear")]).run(context)
-        StepRunner([CommandStep("tester", cmd)]).run(context)
-
-        # 4. Wait for icmp_forge.py to finish sending all packets
-        time.sleep(15)
-
-        # 5. Stop PCAP
-        StepRunner([PcapStopStep()]).run(context)
-
-        # ---------------------------------------------------------
-        # THE IPv6 SCREENSHOT LOOP
-        # ---------------------------------------------------------
-        pcap_path = context.pcap_file
-
-        # Map Request Type -> Expected Reply Type (ICMPv6)
-        ipv6_mapping = {
+        # Map: Request Type -> Expected Reply Type (ICMPv6)
+        ipv6_respond_mapping = {
             128: 129,  # Echo Request -> Echo Reply
             129: 129,  # Echo Reply
-            1: 1,      # Dest Unreachable
-            2: 2,      # Packet Too Big
-            3: 3,      # Time Exceeded
-            4: 4,      # Parameter Problem
+            1:   1,    # Destination Unreachable
+            2:   2,    # Packet Too Big
+            3:   3,    # Time Exceeded
+            4:   4,    # Parameter Problem
             133: 134,  # Router Solicitation -> Router Advertisement
             134: 134,  # Router Advertisement
-            135: 136,  # Neighbor Solicitation -> Neighbor Advertisement
-            136: 136,  # Neighbor Advertisement
-            137: 137   # Redirect
+            135: 136,  # Neighbour Solicitation -> Neighbour Advertisement
+            136: 136,  # Neighbour Advertisement
+            137: 137,  # Redirect
         }
 
-        for req_type, expected_reply in ipv6_mapping.items():
+        # Run screenshot loop for Respond-to tests
+        run_screenshot_loop(context, context.pcap_file, ipv6_respond_mapping,
+                            ip_version=6, target_ip=ipv6_target, test_label="Respond")
 
-            # 1. Clear terminal and print header
-            StepRunner([CommandStep("tester", "clear")]).run(context)
-            header_cmd = f"echo -e '\\n=== Auditing IPv6 ICMP Type {req_type} ==='"
-            StepRunner([CommandStep("tester", header_cmd)]).run(context)
+        # Validate Respond PCAP
+        respond_status = validate_pcap(context, context.pcap_file)
 
-            # 2. Define the exact tshark filter (IPv6-specific fields!)
-            tshark_filter = (
-                f"(ipv6.dst == {ipv6_target} and icmpv6.type == {req_type}) or "
-                f"(ipv6.src == {ipv6_target} and (icmpv6.type == {expected_reply} or icmpv6.type == 1))"
-            )
+        # ===================================================================
+        # PART 2: SEND TESTS (Trigger DuT to generate ICMP, capture on Kali)
+        # ===================================================================
+        print("\n[=== PART 2: SEND TESTS (IPv6) ===]")
 
-            # ---------------------------------------------------------
-            # THE TERMINAL PROOF
-            # ---------------------------------------------------------
-            # 3a. Run tshark visibly in tmux so we can read it
-            tshark_cmd = f"tshark -r {pcap_path} -Y '{tshark_filter}'"
-            StepRunner([CommandStep("tester", tshark_cmd)]).run(context)
-            time.sleep(1)
+        openwrt_ip = context.openwrt_ip
+        if not openwrt_ip:
+            print("[-] No OpenWRT IP provided. Skipping Send tests.")
+            self.status = respond_status
+            return self
 
-            # 3b. Take the terminal screenshot
-            StepRunner([ScreenshotStep(terminal="tester", suffix=f"ipv6_type_{req_type}")]).run(context)
+        # Run Send capture cycle (SSH into OpenWRT, trigger ICMPv6)
+        send_ok = run_send_capture_cycle(context, ip_version=6, dut_ip=openwrt_ip,
+                                         pcap_filename="icmp_ipv6_send.pcapng")
 
-            # ---------------------------------------------------------
-            # THE WIRESHARK GUI PROOF
-            # ---------------------------------------------------------
-            # 4a. Check if any packets match this filter
-            StepRunner([AnalyzePcapStep(filter_expr=tshark_filter)]).run(context)
+        if send_ok:
+            # Use OpenWRT's IPv6 for filtering (packets FROM OpenWRT)
+            openwrt_ipv6 = context.openwrt_ipv6 or openwrt_ip
 
-            # 4b. Open Wireshark with the FULL display filter (shows request + response pairs)
-            if context.matched_frame:
-                StepRunner([WiresharkPacketScreenshotStep(
-                    suffix=f"ipv6_type_{req_type}",
-                    display_filter=tshark_filter
-                )]).run(context)
+            # Screenshot loop for Send tests (packets FROM OpenWRT)
+            run_send_screenshot_loop(context, context.pcap_file, ip_version=6, dut_ip=openwrt_ipv6)
+
+            # Check NOT PERMITTED types (should NOT be sent by DuT)
+            violations = check_not_permitted_send(context, context.pcap_file, ip_version=6, dut_ip=openwrt_ipv6)
+
+            # Validate Send PCAP
+            send_status = validate_pcap(context, context.pcap_file)
+
+            # Determine overall status
+            if violations:
+                print(f"\n[✗] FAIL: DuT sent {len(violations)} NOT PERMITTED ICMPv6 types: {violations}")
+                self.status = "FAIL"
+            elif respond_status == "INCONCLUSIVE" or send_status == "INCONCLUSIVE":
+                self.status = "INCONCLUSIVE"
             else:
-                print(f"[*] No matching packets found for Type {req_type}. (Silent Drop successful). Skipping Wireshark.")
-
-        # Validate: if pcap has 0 packets, warn that test may be invalid
-        check_cmd = f"tshark -r {pcap_path} | wc -l"
-        StepRunner([CommandStep("tester", check_cmd)]).run(context)
-        time.sleep(1)
-        output = context.terminal_manager.capture_output("tester")
-        try:
-            pkt_count = int(output.strip().split('\n')[-1].strip())
-        except (ValueError, IndexError):
-            pkt_count = -1
-
-        if pkt_count == 0:
-            print("[⚠] WARNING: 0 packets captured! ICMP packets may not have been sent.")
-            print("[⚠] Ensure sudo works without password prompt in tmux.")
-            print("[⚠] Run: sudo visudo → add: paine ALL=(ALL) NOPASSWD: /usr/bin/python3")
-            self.status = "INCONCLUSIVE"
+                self.status = "PASS"
         else:
-            self.status = "PASS"
+            self.status = respond_status
 
         return self

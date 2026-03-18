@@ -6,7 +6,8 @@ from reporting.report_manager import ReportManager
 
 class Engine:
 
-    def __init__(self, clause=None, section=None, ssh_user=None, dut_ip=None, ssh_password=None, dut_ipv6=None):
+    def __init__(self, clause=None, section=None, ssh_user=None, dut_ip=None, ssh_password=None, dut_ipv6=None,
+                 sudo_password=None, openwrt_ip=None, openwrt_ipv6=None, openwrt_password=None):
 
         self.context = RuntimeContext(
             clause=clause,
@@ -14,7 +15,11 @@ class Engine:
             ssh_user=ssh_user,
             dut_ip=dut_ip,
             ssh_password=ssh_password,
-            dut_ipv6=dut_ipv6
+            dut_ipv6=dut_ipv6,
+            sudo_password=sudo_password,
+            openwrt_ip=openwrt_ip,
+            openwrt_ipv6=openwrt_ipv6,
+            openwrt_password=openwrt_password,
         )
 
         logger.info("Engine initialized")

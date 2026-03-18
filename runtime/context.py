@@ -8,7 +8,9 @@ class RuntimeContext:
     Shared runtime state used across the TCAF framework.
     """
 
-    def __init__(self, clause=None, section=None, ssh_user=None, dut_ip=None, ssh_password=None, dut_ipv6=None, snmp_user=None, snmp_auth_pass=None, snmp_priv_pass=None):
+    def __init__(self, clause=None, section=None, ssh_user=None, dut_ip=None, ssh_password=None, dut_ipv6=None,
+                 snmp_user=None, snmp_auth_pass=None, snmp_priv_pass=None,
+                 sudo_password=None, openwrt_ip=None, openwrt_ipv6=None, openwrt_password=None):
 
         self.execution_id = str(uuid.uuid4())
 
@@ -24,6 +26,12 @@ class RuntimeContext:
         self.snmp_user = snmp_user
         self.snmp_auth_pass = snmp_auth_pass
         self.snmp_priv_pass = snmp_priv_pass
+
+        # Sudo and OpenWRT credentials
+        self.sudo_password = sudo_password
+        self.openwrt_ip = openwrt_ip
+        self.openwrt_ipv6 = openwrt_ipv6
+        self.openwrt_password = openwrt_password
 
         # Core subsystems (initialized later)
         self.ssh_connection = None

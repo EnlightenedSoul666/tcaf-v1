@@ -1,8 +1,10 @@
 class BaseClause:
 
     # Subclasses declare what credentials/info they need
-    REQUIRES_SSH  = False
-    REQUIRES_IPV6 = False
+    REQUIRES_SSH     = False
+    REQUIRES_IPV6    = False
+    REQUIRES_OPENWRT = False
+    REQUIRES_SUDO    = False
 
     def __init__(self, context):
 

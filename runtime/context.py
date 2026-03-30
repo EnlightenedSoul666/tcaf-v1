@@ -5,7 +5,7 @@ from evidence.manager import EvidenceManager
 
 class RuntimeContext:
     """
-    Shared runtime state used across the TCAF framework.
+    Shared runtime state used across the ITSAR compliance framework.
     """
 
     def __init__(self, clause=None, section=None, ssh_user=None, dut_ip=None, ssh_password=None, dut_ipv6=None,

@@ -9,7 +9,7 @@ from scapy.layers.inet6 import (
 )
 
 def main():
-    parser = argparse.ArgumentParser(description="TCAF ICMP Forger for Clause 1.10.1")
+    parser = argparse.ArgumentParser(description="ICMP Forger for ITSAR Clause 1.10.1")
     parser.add_argument("--ipv4", help="Target IPv4 Address")
     parser.add_argument("--ipv6", help="Target IPv6 Address")
     parser.add_argument("--logfile", help="Path to save the execution log")

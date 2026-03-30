@@ -6,7 +6,7 @@ from config.settings import settings
 
 def setup_logger():
     """
-    Initialize the global TCAF logger.
+    Initialize the global ITSAR compliance logger.
     """
 
     log_file = settings.LOG_DIR / "tcaf.log"

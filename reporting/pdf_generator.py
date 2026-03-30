@@ -153,7 +153,7 @@ class DOCXGenerator:
     # ─────────────────────────────────────────
     # TITLE PAGE
     # ─────────────────────────────────────────
-    def _add_title(self, doc, title_text="Telecom Compliance Automation Framework (TCAF)"):
+    def _add_title(self, doc, title_text="SECURITY TEST REPORT"):
         title = doc.add_paragraph()
         title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
@@ -1087,7 +1087,7 @@ class DOCXGenerator:
             meta, nmap_data, cipher_data, ssh_data, weak_cipher_result,
             https_cipher_data, https_data, testbed_image_path
         """
-        report_path = os.path.join(self.output_dir, "tcaf_report.docx")
+        report_path = os.path.join(self.output_dir, "itsar_report.docx")
         doc = Document()
 
         self._add_page_number(doc)

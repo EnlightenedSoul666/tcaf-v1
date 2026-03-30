@@ -10,7 +10,7 @@ class VisibleTerminal(BaseTerminal):
 
         super().__init__(name)
 
-        self.session = f"TCAF-{name}"
+        self.session = f"ITSAR-{name}"
 
         logger.info(f"Creating tmux session: {self.session}")
 

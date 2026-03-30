@@ -66,7 +66,7 @@ def build_styles():
                                 textColor=C_DARK_BLUE, spaceAfter=4, spaceBefore=8)),
         ("SubSubHeading",  dict(fontName="Helvetica-Bold", fontSize=10, leading=14,
                                 textColor=C_MID_BLUE, spaceAfter=3, spaceBefore=6)),
-        ("BodyText2",      dict(fontName="Helvetica", fontSize=10, leading=14,
+        ("BodyText",       dict(fontName="Helvetica", fontSize=10, leading=14,
                                 textColor=C_BLACK, spaceAfter=4, alignment=TA_JUSTIFY)),
         ("BulletText",     dict(fontName="Helvetica", fontSize=10, leading=14,
                                 textColor=C_BLACK, spaceAfter=3, leftIndent=15)),
@@ -86,7 +86,12 @@ def build_styles():
                                 textColor=C_BLACK, spaceAfter=2)),
     ]
     for name, kw in defs:
-        styles.add(ParagraphStyle(name, **kw))
+        if name in styles:
+            # Update existing built-in style in-place (e.g. BodyText)
+            for k, v in kw.items():
+                setattr(styles[name], k, v)
+        else:
+            styles.add(ParagraphStyle(name, **kw))
     return styles
 
 
@@ -96,7 +101,7 @@ def build_styles():
 class _PageTemplateHelper:
     """Stores the report title so the page template callback can use it."""
 
-    title = "TCAF COMPLIANCE TEST REPORT  |  ITSAR FORMAT"
+    title = "ITSAR COMPLIANCE TEST REPORT"
 
     @classmethod
     def draw(cls, canvas, doc):
@@ -162,7 +167,7 @@ def sub_sub_heading(text, styles):
 
 
 def body(text, styles):
-    return [Paragraph(text, styles["BodyText2"]), Spacer(1, 3)]
+    return [Paragraph(text, styles["BodyText"]), Spacer(1, 3)]
 
 
 def bullet(text, styles):
@@ -172,7 +177,7 @@ def bullet(text, styles):
 def label_value(label, value, styles):
     return [
         Paragraph(f"<b>{label}</b>", styles["LabelBold"]),
-        Paragraph(str(value), styles["BodyText2"]),
+        Paragraph(str(value), styles["BodyText"]),
         Spacer(1, 4),
     ]
 
@@ -399,7 +404,7 @@ def compliance_table(checks, styles):
 
 def recommendation_box(text, styles):
     """Blue info-box for recommendations."""
-    rec = Table([[Paragraph(text, styles["BodyText2"])]], colWidths=[W - 40 * mm])
+    rec = Table([[Paragraph(text, styles["BodyText"])]], colWidths=[W - 40 * mm])
     rec.setStyle(TableStyle([
         ("BACKGROUND",    (0, 0), (-1, -1), colors.HexColor("#EBF5FB")),
         ("BOX",           (0, 0), (-1, -1), 1, C_ACCENT),
@@ -412,7 +417,7 @@ def recommendation_box(text, styles):
 
 def info_box(text, styles):
     """Light-blue requirement info box."""
-    tbl = Table([[Paragraph(text, styles["BodyText2"])]], colWidths=[W - 40 * mm])
+    tbl = Table([[Paragraph(text, styles["BodyText"])]], colWidths=[W - 40 * mm])
     tbl.setStyle(TableStyle([
         ("BACKGROUND",    (0, 0), (-1, -1), C_LIGHT_BLUE),
         ("BOX",           (0, 0), (-1, -1), 1, C_ACCENT),
@@ -426,7 +431,7 @@ def info_box(text, styles):
 def metadata_table(rows_data, styles):
     """Two-column metadata table (label | value) with alternating rows."""
     meta_data = [
-        [Paragraph(k, styles["LabelBold"]), Paragraph(str(v), styles["BodyText2"])]
+        [Paragraph(k, styles["LabelBold"]), Paragraph(str(v), styles["BodyText"])]
         for k, v in rows_data
     ]
     mt = Table(meta_data, colWidths=[55 * mm, W - 40 * mm - 55 * mm])
@@ -444,9 +449,9 @@ def metadata_table(rows_data, styles):
 def testbed_diagram(left_label, middle_label, right_label, styles):
     """Simple three-column test bed diagram."""
     tb = Table([[
-        Paragraph(left_label, styles["BodyText2"]),
-        Paragraph(middle_label, styles["BodyText2"]),
-        Paragraph(right_label, styles["BodyText2"]),
+        Paragraph(left_label, styles["BodyText"]),
+        Paragraph(middle_label, styles["BodyText"]),
+        Paragraph(right_label, styles["BodyText"]),
     ]], colWidths=[55 * mm, 65 * mm, 55 * mm])
     tb.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (0, 0), C_LIGHT_BLUE),
@@ -526,12 +531,12 @@ def build_tc_detail(tc_num, tc_id, tc_name, description, input_cmd,
 
     # a) Test Case Name
     items.append(Paragraph("<b>a) Test Case Name:</b>", styles["LabelBold"]))
-    items.append(Paragraph(tc_id, styles["BodyText2"]))
+    items.append(Paragraph(tc_id, styles["BodyText"]))
     items.append(Spacer(1, 3))
 
     # b) Description
     items.append(Paragraph("<b>b) Test Case Description:</b>", styles["LabelBold"]))
-    items.append(Paragraph(description, styles["BodyText2"]))
+    items.append(Paragraph(description, styles["BodyText"]))
     items.append(Spacer(1, 3))
 
     # c) Input Command
@@ -541,7 +546,7 @@ def build_tc_detail(tc_num, tc_id, tc_name, description, input_cmd,
 
     # d) Expected Result
     items.append(Paragraph("<b>d) Expected Result:</b>", styles["LabelBold"]))
-    items.append(Paragraph(expected, styles["BodyText2"]))
+    items.append(Paragraph(expected, styles["BodyText"]))
     items.append(Spacer(1, 3))
 
     # e) Actual Result
@@ -625,7 +630,7 @@ class PDFReportBase(ABC):
     """
 
     CLAUSE_ID    = "0.0.0"
-    HEADER_TITLE = "TCAF COMPLIANCE TEST REPORT  |  ITSAR FORMAT"
+    HEADER_TITLE = "ITSAR COMPLIANCE TEST REPORT"
 
     def __init__(self, context, results):
         self.context = context

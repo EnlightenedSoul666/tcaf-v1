@@ -7,7 +7,7 @@ from clauses.registry import CLAUSE_REGISTRY
 
 
 app = typer.Typer(
-    help="TCAF - Telecom Compliance Automation Framework"
+    help="ITSAR Compliance Automation Framework"
 )
 
 @app.command()
@@ -17,7 +17,7 @@ def run(
 ):
     initialize_directories()
 
-    logger.info("TCAF CLI started")
+    logger.info("ITSAR CLI started")
 
     # Always ask for DuT IP (needed by all clauses)
     dut_ip = input("Enter DuT IP address: ")

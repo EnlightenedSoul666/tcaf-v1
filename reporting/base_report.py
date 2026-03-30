@@ -228,7 +228,7 @@ class BaseReport:
     # ─────────────────────────────────────────
     # TITLE
     # ─────────────────────────────────────────
-    def add_title(self, doc, title_text="Telecom Compliance Automation Framework (TCAF)"):
+    def add_title(self, doc, title_text="SECURITY TEST REPORT"):
         title = doc.add_paragraph()
         title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
@@ -376,7 +376,7 @@ class BaseReport:
         # ── Title ──
         title = doc.add_paragraph()
         title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = title.add_run("Telecom Compliance Automation Framework (TCAF)")
+        run = title.add_run("SECURITY TEST REPORT")
         run.bold = True
         run.font.size = Pt(22)
         run.font.color.rgb = PURPLE

@@ -17,8 +17,8 @@ class Settings:
     SSH_TIMEOUT = 10
 
     # Framework metadata
-    FRAMEWORK_NAME = "TCAF"
-    FRAMEWORK_FULL_NAME = "Telecom Compliance Automation Framework"
+    FRAMEWORK_NAME = "ITSAR"
+    FRAMEWORK_FULL_NAME = "ITSAR Compliance Automation Framework"
     VERSION = "0.1"
 
 

@@ -334,7 +334,7 @@ def _trigger_ipv4_send(context, openwrt_ip, openwrt_pass, kali_ip, sudo_pass):
     # ── Type 11 (Time Exceeded) — Send: Optional ─────────────────────────
     # Send packet with TTL=1 to OpenWRT → it decrements to 0 → sends Type 11
     print("[*] Triggering Type 11 (Time Exceeded): Sending TTL=1 packet to OpenWRT")
-    cmd = f"sudo python3 -c \"from scapy.all import *; send(IP(dst='{openwrt_ip}', ttl=1)/ICMP()/Raw(b'TCAF-TTL-TEST'))\""
+    cmd = f"sudo python3 -c \"from scapy.all import *; send(IP(dst='{openwrt_ip}', ttl=1)/ICMP()/Raw(b'ITSAR-TTL-TEST'))\""
     StepRunner([CommandStep("tester", cmd)]).run(context)
     time.sleep(3)
 

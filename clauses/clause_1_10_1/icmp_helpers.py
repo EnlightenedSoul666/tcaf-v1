@@ -21,12 +21,40 @@ import time
 #  (Dest Unreachable, Time Exceeded, Redirect, etc.)
 # ===========================================================================
 
+def _run_traceroute(context, ip_version, targets, label):
+    """
+    Run traceroute to each target IP and take a screenshot.
+
+    Args:
+        ip_version: 4 or 6
+        targets:    list of IP strings to trace
+        label:      suffix for the screenshot (e.g. "before_routing" / "after_routing")
+    """
+    cmd_prefix = "traceroute -n -m 5 -w 2" if ip_version == 4 else "traceroute6 -n -m 5 -w 2"
+    StepRunner([CommandStep("tester", "clear")]).run(context)
+    header_cmd = f"echo -e '\\n=== TRACEROUTE {label.upper()} (IPv{ip_version}) ==='"
+    StepRunner([CommandStep("tester", header_cmd)]).run(context)
+    time.sleep(0.5)
+
+    for target in targets:
+        if not target:
+            continue
+        StepRunner([CommandStep("tester", f"{cmd_prefix} {target}")]).run(context)
+        time.sleep(3)  # wait for traceroute to complete (max 5 hops x 2s = 10s worst case)
+
+    StepRunner([ScreenshotStep(
+        terminal="tester",
+        suffix=f"traceroute_ipv{ip_version}_{label}"
+    )]).run(context)
+
+
 def setup_routing(context, ip_version):
     """
     Configure the tester (Kali) routing table so that:
       - Packets to the nonsense IP go via OpenWRT  (for Dest Unreachable)
       - Packets to Metasploitable go via OpenWRT   (for Redirect tests)
 
+    Runs traceroute BEFORE and AFTER adding routes as evidence.
     This must run BEFORE the Send and Process tests.
     """
     sudo_pass = context.sudo_password or ""
@@ -37,12 +65,22 @@ def setup_routing(context, ip_version):
         print("[-] No OpenWRT IP provided. Cannot setup routing.")
         return
 
-    # Authenticate sudo once
+    # ── BEFORE: traceroute to document the current (default) path ────────────
+    if ip_version == 4:
+        targets_before = [t for t in [context.nonsense_ip, context.metasploitable_ip] if t]
+    else:
+        targets_before = [t for t in [context.nonsense_ipv6, context.metasploitable_ipv6] if t]
+
+    if targets_before:
+        print(f"[*] Running traceroute BEFORE route setup (IPv{ip_version})")
+        _run_traceroute(context, ip_version, targets_before, "before_routing")
+
+    # ── Authenticate sudo once ────────────────────────────────────────────────
     StepRunner([CommandStep("tester", f"echo '{sudo_pass}' | sudo -S true")]).run(context)
     time.sleep(1)
 
+    # ── Add routes ────────────────────────────────────────────────────────────
     if ip_version == 4:
-        # Route nonsense IPv4 via OpenWRT
         nonsense_ip = context.nonsense_ip
         if nonsense_ip:
             cmd = f"sudo ip route add {nonsense_ip}/32 via {openwrt_ip}"
@@ -50,7 +88,6 @@ def setup_routing(context, ip_version):
             StepRunner([CommandStep("tester", cmd)]).run(context)
             time.sleep(1)
 
-        # Route Metasploitable IPv4 via OpenWRT
         meta_ip = context.metasploitable_ip
         if meta_ip:
             cmd = f"sudo ip route add {meta_ip}/32 via {openwrt_ip}"
@@ -77,7 +114,7 @@ def setup_routing(context, ip_version):
             StepRunner([CommandStep("tester", cmd)]).run(context)
             time.sleep(1)
 
-    # Screenshot the routing table as evidence
+    # ── Show routing table as evidence ────────────────────────────────────────
     StepRunner([CommandStep("tester", "clear")]).run(context)
     if ip_version == 4:
         StepRunner([CommandStep("tester", "ip route show")]).run(context)
@@ -86,8 +123,13 @@ def setup_routing(context, ip_version):
     time.sleep(1)
     StepRunner([ScreenshotStep(
         terminal="tester",
-        suffix=f"routing_setup_ipv{ip_version}"
+        suffix=f"routing_table_ipv{ip_version}"
     )]).run(context)
+
+    # ── AFTER: traceroute to confirm traffic now flows through OpenWRT ────────
+    if targets_before:
+        print(f"[*] Running traceroute AFTER route setup (IPv{ip_version})")
+        _run_traceroute(context, ip_version, targets_before, "after_routing")
 
 
 def teardown_routing(context, ip_version):

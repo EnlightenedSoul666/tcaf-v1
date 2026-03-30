@@ -362,3 +362,142 @@ class BaseReport:
                 title = f"{label_prefix}{basename}" if label_prefix else basename
             self.add_screenshot_block(doc, title, img_path)
             doc.add_paragraph()
+
+    # ─────────────────────────────────────────
+    # FRONT PAGE  (title, metadata, overall result)
+    # ─────────────────────────────────────────
+    def _add_front_page(self, doc, context, results):
+        """Professional front page with title, metadata table, and overall result banner."""
+
+        # Compute overall result
+        failed = [tc for tc in results if getattr(tc, "status", "FAIL").upper() != "PASS"]
+        overall = "PASS" if not failed else "FAIL"
+
+        # ── Title ──
+        title = doc.add_paragraph()
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = title.add_run("Telecom Compliance Automation Framework (TCAF)")
+        run.bold = True
+        run.font.size = Pt(22)
+        run.font.color.rgb = PURPLE
+
+        # ── Subtitle ──
+        sub = doc.add_paragraph()
+        sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run2 = sub.add_run(f"ITSAR Compliance Test Report -- Clause {context.clause}")
+        run2.bold = True
+        run2.font.size = Pt(14)
+        run2.font.color.rgb = PURPLE
+        doc.add_paragraph()
+
+        # ── Metadata table ──
+        now = datetime.now()
+        meta_rows = [
+            ("ITSAR Clause",     str(context.clause)),
+            ("DUT Name",         getattr(context, "dut_model", "N/A") or "N/A"),
+            ("DUT IP Address",   getattr(context, "dut_ip", "N/A") or "N/A"),
+            ("DUT Firmware",     getattr(context, "dut_firmware", "N/A") or "N/A"),
+            ("Test Date",        now.strftime("%Y-%m-%d")),
+            ("Test Time",        now.strftime("%H:%M:%S")),
+            ("Total Test Cases", str(len(results))),
+            ("Overall Result",   overall),
+        ]
+
+        table = doc.add_table(rows=len(meta_rows) + 1, cols=2)
+        table.style = "Table Grid"
+
+        for i, header in enumerate(["Parameter", "Value"]):
+            cell = table.rows[0].cells[i]
+            cell.text = header
+            self.style_table_header(cell)
+
+        for i, (key, val) in enumerate(meta_rows, start=1):
+            table.rows[i].cells[0].text = key
+            table.rows[i].cells[1].text = str(val)
+
+            # Color the overall result cell
+            if key == "Overall Result":
+                cell = table.rows[i].cells[1]
+                for para in cell.paragraphs:
+                    for run in para.runs:
+                        run.bold = True
+                        run.font.color.rgb = GREEN if overall == "PASS" else RED
+
+        self.add_data_cell_padding(table)
+        self.prevent_table_row_split(table)
+
+        doc.add_paragraph()
+
+        # ── Overall result banner ──
+        banner = doc.add_paragraph()
+        banner.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run_b = banner.add_run(f"OVERALL RESULT:  {overall}")
+        run_b.bold = True
+        run_b.font.size = Pt(18)
+        run_b.font.color.rgb = GREEN if overall == "PASS" else RED
+
+        doc.add_page_break()
+
+    # ─────────────────────────────────────────
+    # COMPLIANCE ANALYSIS TABLE
+    # ─────────────────────────────────────────
+    def _add_compliance_analysis(self, doc, results, section_num="11"):
+        """Add compliance analysis table mapping requirements to test results."""
+        h = self.add_itsar_heading(doc, f"{section_num}. Compliance Analysis", 2)
+        self.keep_with_next(h)
+
+        headers = ["Clause Requirement", "Test Case(s)", "Result"]
+        table = doc.add_table(rows=len(results) + 1, cols=len(headers))
+        table.style = "Table Grid"
+
+        for i, header in enumerate(headers):
+            cell = table.rows[0].cells[i]
+            cell.text = header
+            self.style_table_header(cell)
+
+        for i, tc in enumerate(results, start=1):
+            desc = getattr(tc, "description", getattr(tc, "name", f"TC{i}"))
+            table.rows[i].cells[0].text = str(desc)[:70]
+            table.rows[i].cells[1].text = getattr(tc, "name", f"TC{i}")
+            table.rows[i].cells[2].text = getattr(tc, "status", "N/A")
+
+            status_cell = table.rows[i].cells[2]
+            for para in status_cell.paragraphs:
+                para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                for run in para.runs:
+                    run.bold = True
+                    status = getattr(tc, "status", "N/A")
+                    run.font.color.rgb = GREEN if status.upper() == "PASS" else RED
+
+        self.add_data_cell_padding(table, skip_first_row=True)
+        self.prevent_table_row_split(table)
+
+    # ─────────────────────────────────────────
+    # CONCLUSION & RECOMMENDATIONS
+    # ─────────────────────────────────────────
+    def _add_conclusion(self, doc, results, section_num="12", recommendations=None):
+        """Add conclusion section with optional recommendations."""
+        self.add_itsar_heading(doc, f"{section_num}. Conclusion", 2)
+
+        total = len(results)
+        failed = [tc for tc in results if getattr(tc, "status", "FAIL").upper() != "PASS"]
+
+        if not failed:
+            doc.add_paragraph(
+                f"All {total} test case(s) passed. The DUT complies with the "
+                "requirements specified in this ITSAR clause."
+            )
+        else:
+            names = ", ".join(getattr(tc, "name", "?") for tc in failed)
+            doc.add_paragraph(
+                f"The test run identified {len(failed)} failing test case(s): {names}. "
+                "The DUT does NOT fully comply with this ITSAR clause. "
+                "Remediation is required before the DUT can be considered compliant."
+            )
+
+        if recommendations:
+            doc.add_paragraph()
+            h = self.add_itsar_subheading(doc, f"{section_num}.1 Recommendations", 2)
+            self.keep_with_next(h)
+            for rec in recommendations:
+                doc.add_paragraph(f"\u2022 {rec}")

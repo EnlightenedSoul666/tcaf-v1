@@ -7,7 +7,9 @@ from reporting.report_manager import ReportManager
 class Engine:
 
     def __init__(self, clause=None, section=None, ssh_user=None, dut_ip=None, ssh_password=None, dut_ipv6=None,
-                 sudo_password=None, openwrt_ip=None, openwrt_ipv6=None, openwrt_password=None):
+                 sudo_password=None, openwrt_ip=None, openwrt_ipv6=None, openwrt_password=None,
+                 metasploitable_ip=None, metasploitable_ipv6=None,
+                 nonsense_ip=None, nonsense_ipv6=None):
 
         self.context = RuntimeContext(
             clause=clause,
@@ -20,6 +22,10 @@ class Engine:
             openwrt_ip=openwrt_ip,
             openwrt_ipv6=openwrt_ipv6,
             openwrt_password=openwrt_password,
+            metasploitable_ip=metasploitable_ip,
+            metasploitable_ipv6=metasploitable_ipv6,
+            nonsense_ip=nonsense_ip,
+            nonsense_ipv6=nonsense_ipv6,
         )
 
         logger.info("Engine initialized")
@@ -49,11 +55,13 @@ class Engine:
         for tc in results:
             logger.info(f"{tc.name} → {tc.status}")
 
-        # Generate clause-specific DOCX report
+        # Generate both DOCX and PDF reports
         report_manager = ReportManager()
-        report_file = report_manager.generate(self.context, results)
+        report_paths = report_manager.generate(self.context, results)
 
-        logger.info(f"DOCX report generated: {report_file}")
+        for fmt, path in report_paths.items():
+            if path:
+                logger.info(f"{fmt.upper()} report generated: {path}")
 
     def initialize_runtime(self):
 

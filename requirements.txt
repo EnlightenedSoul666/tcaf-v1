@@ -3,5 +3,6 @@ rich
 paramiko
 reportlab
 python-docx
+Pillow
 scapy
 selenium

@@ -14,9 +14,127 @@ from steps.analyze_pcap_step import AnalyzePcapStep
 import time
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
+#  ROUTING SETUP / TEARDOWN
+#  Route packets destined for Metasploitable and the nonsense IP
+#  through the OpenWRT router, so OpenWRT can generate ICMP errors
+#  (Dest Unreachable, Time Exceeded, Redirect, etc.)
+# ===========================================================================
+
+def setup_routing(context, ip_version):
+    """
+    Configure the tester (Kali) routing table so that:
+      - Packets to the nonsense IP go via OpenWRT  (for Dest Unreachable)
+      - Packets to Metasploitable go via OpenWRT   (for Redirect tests)
+
+    This must run BEFORE the Send and Process tests.
+    """
+    sudo_pass = context.sudo_password or ""
+    openwrt_ip = context.openwrt_ip
+    openwrt_ipv6 = context.openwrt_ipv6
+
+    if not openwrt_ip:
+        print("[-] No OpenWRT IP provided. Cannot setup routing.")
+        return
+
+    # Authenticate sudo once
+    StepRunner([CommandStep("tester", f"echo '{sudo_pass}' | sudo -S true")]).run(context)
+    time.sleep(1)
+
+    if ip_version == 4:
+        # Route nonsense IPv4 via OpenWRT
+        nonsense_ip = context.nonsense_ip
+        if nonsense_ip:
+            cmd = f"sudo ip route add {nonsense_ip}/32 via {openwrt_ip}"
+            print(f"[*] Adding route: {nonsense_ip} via {openwrt_ip}")
+            StepRunner([CommandStep("tester", cmd)]).run(context)
+            time.sleep(1)
+
+        # Route Metasploitable IPv4 via OpenWRT
+        meta_ip = context.metasploitable_ip
+        if meta_ip:
+            cmd = f"sudo ip route add {meta_ip}/32 via {openwrt_ip}"
+            print(f"[*] Adding route: {meta_ip} via {openwrt_ip}")
+            StepRunner([CommandStep("tester", cmd)]).run(context)
+            time.sleep(1)
+
+    else:  # IPv6
+        if not openwrt_ipv6:
+            print("[-] No OpenWRT IPv6 address. Cannot setup IPv6 routing.")
+            return
+
+        nonsense_ipv6 = context.nonsense_ipv6
+        if nonsense_ipv6:
+            cmd = f"sudo ip -6 route add {nonsense_ipv6}/128 via {openwrt_ipv6}"
+            print(f"[*] Adding IPv6 route: {nonsense_ipv6} via {openwrt_ipv6}")
+            StepRunner([CommandStep("tester", cmd)]).run(context)
+            time.sleep(1)
+
+        meta_ipv6 = context.metasploitable_ipv6
+        if meta_ipv6:
+            cmd = f"sudo ip -6 route add {meta_ipv6}/128 via {openwrt_ipv6}"
+            print(f"[*] Adding IPv6 route: {meta_ipv6} via {openwrt_ipv6}")
+            StepRunner([CommandStep("tester", cmd)]).run(context)
+            time.sleep(1)
+
+    # Screenshot the routing table as evidence
+    StepRunner([CommandStep("tester", "clear")]).run(context)
+    if ip_version == 4:
+        StepRunner([CommandStep("tester", "ip route show")]).run(context)
+    else:
+        StepRunner([CommandStep("tester", "ip -6 route show")]).run(context)
+    time.sleep(1)
+    StepRunner([ScreenshotStep(
+        terminal="tester",
+        suffix=f"routing_setup_ipv{ip_version}"
+    )]).run(context)
+
+
+def teardown_routing(context, ip_version):
+    """
+    Remove the routes added by setup_routing().
+    Runs AFTER all tests complete (cleanup).
+    """
+    sudo_pass = context.sudo_password or ""
+    openwrt_ip = context.openwrt_ip
+    openwrt_ipv6 = context.openwrt_ipv6
+
+    if not openwrt_ip:
+        return
+
+    StepRunner([CommandStep("tester", f"echo '{sudo_pass}' | sudo -S true")]).run(context)
+    time.sleep(1)
+
+    if ip_version == 4:
+        nonsense_ip = context.nonsense_ip
+        if nonsense_ip:
+            cmd = f"sudo ip route del {nonsense_ip}/32 via {openwrt_ip} 2>/dev/null"
+            StepRunner([CommandStep("tester", cmd)]).run(context)
+
+        meta_ip = context.metasploitable_ip
+        if meta_ip:
+            cmd = f"sudo ip route del {meta_ip}/32 via {openwrt_ip} 2>/dev/null"
+            StepRunner([CommandStep("tester", cmd)]).run(context)
+
+    else:
+        if not openwrt_ipv6:
+            return
+        nonsense_ipv6 = context.nonsense_ipv6
+        if nonsense_ipv6:
+            cmd = f"sudo ip -6 route del {nonsense_ipv6}/128 via {openwrt_ipv6} 2>/dev/null"
+            StepRunner([CommandStep("tester", cmd)]).run(context)
+
+        meta_ipv6 = context.metasploitable_ipv6
+        if meta_ipv6:
+            cmd = f"sudo ip -6 route del {meta_ipv6}/128 via {openwrt_ipv6} 2>/dev/null"
+            StepRunner([CommandStep("tester", cmd)]).run(context)
+
+    print(f"[*] Routing cleanup complete (IPv{ip_version})")
+
+
+# ===========================================================================
 #  RESPOND-TO TESTS (We send ICMP to DuT, check if it responds correctly)
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 def run_capture_cycle(context, forge_flag, target_ip, pcap_filename, log_file):
     """
@@ -47,6 +165,8 @@ def run_screenshot_loop(context, pcap_path, type_mapping, ip_version, target_ip,
     """
     Loop over ICMP type mappings and take terminal + Wireshark screenshots.
     Used for both Respond-to and Send tests.
+
+    type_mapping = { request_type: expected_reply_type, ... }
     """
     if ip_version == 4:
         ip_dst = f"ip.dst == {target_ip}"
@@ -100,14 +220,21 @@ def run_screenshot_loop(context, pcap_path, type_mapping, ip_version, target_ip,
             print(f"[*] No packets for {label} Type {req_type} ({test_label}). Skipping Wireshark.")
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 #  SEND TESTS (Trigger DuT to generate ICMP, capture on our machine)
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 def run_send_capture_cycle(context, ip_version, dut_ip, pcap_filename):
     """
-    Start PCAP, SSH into OpenWRT (DuT) to trigger ICMP Send conditions, wait, stop PCAP.
-    Triggers all Send-type ICMP packets from the DuT.
+    Start PCAP, trigger ICMP Send conditions on OpenWRT, wait, stop PCAP.
+
+    Send triggers:
+      - Huge packet        → DuT sends Packet Too Big     (IPv6 Type 2)
+      - Malformed packet   → DuT sends Parameter Problem  (Type 12 / Type 4)
+      - TTL=1 packet       → DuT sends Time Exceeded      (Type 11 / Type 3)
+      - Nonsense IP packet → DuT sends Dest Unreachable   (Type 3  / Type 1)
+      - Ping from DuT      → DuT sends Echo Request       (Type 8  / Type 128)
+      - Timestamp Request  → check DuT does NOT reply      (Type 14 not permitted)
     """
     openwrt_ip = context.openwrt_ip
     openwrt_pass = context.openwrt_password
@@ -139,100 +266,137 @@ def run_send_capture_cycle(context, ip_version, dut_ip, pcap_filename):
 
 
 def _trigger_ipv4_send(context, openwrt_ip, openwrt_pass, kali_ip, sudo_pass):
-    """Trigger IPv4 ICMP Send conditions on OpenWRT."""
+    """
+    Trigger IPv4 ICMP Send conditions on OpenWRT.
 
-    # Type 8 (Echo Request) - Send: Permitted
-    # SSH into OpenWRT and ping Kali
+    Each trigger is designed to make the DuT (OpenWRT) GENERATE a specific
+    ICMP type that we then capture on our Kali tester.
+    """
+    nonsense_ip = context.nonsense_ip or "192.168.99.99"
+
+    # ── Type 8 (Echo Request) — Send: Permitted ──────────────────────────
+    # SSH into OpenWRT and ping Kali → OpenWRT generates Type 8
     print("[*] Triggering Type 8 (Echo Request): OpenWRT pings Kali")
     cmd = f"sshpass -p '{openwrt_pass}' ssh -o StrictHostKeyChecking=no root@{openwrt_ip} 'ping -c 5 -W 2 {kali_ip}'"
     StepRunner([CommandStep("tester", cmd)]).run(context)
     time.sleep(6)
 
-    # Type 3 (Destination Unreachable) - Send: Permitted
-    # Send packet to unreachable IP, OpenWRT should generate Type 3
-    print("[*] Triggering Type 3 (Dest Unreachable): Sending to unreachable IP via OpenWRT")
-    cmd = f"sudo ping -c 3 -W 2 192.168.99.99"
+    # ── Type 3 (Destination Unreachable) — Send: Permitted ───────────────
+    # Send packet to nonsense IP routed through OpenWRT
+    # OpenWRT can't deliver it → generates Type 3 back to us
+    print(f"[*] Triggering Type 3 (Dest Unreachable): Sending to nonsense IP {nonsense_ip} via OpenWRT")
+    cmd = f"sudo ping -c 3 -W 2 {nonsense_ip}"
     StepRunner([CommandStep("tester", cmd)]).run(context)
     time.sleep(4)
 
-    # Type 11 (Time Exceeded) - Send: Optional
-    # Send packet with TTL=1 to OpenWRT, it should respond with Type 11
-    print("[*] Triggering Type 11 (Time Exceeded): Sending TTL=1 packet")
-    cmd = f"sudo python3 -c \"from scapy.all import *; send(IP(dst='{openwrt_ip}', ttl=1)/ICMP())\""
+    # ── Type 11 (Time Exceeded) — Send: Optional ─────────────────────────
+    # Send packet with TTL=1 to OpenWRT → it decrements to 0 → sends Type 11
+    print("[*] Triggering Type 11 (Time Exceeded): Sending TTL=1 packet to OpenWRT")
+    cmd = f"sudo python3 -c \"from scapy.all import *; send(IP(dst='{openwrt_ip}', ttl=1)/ICMP()/Raw(b'TCAF-TTL-TEST'))\""
     StepRunner([CommandStep("tester", cmd)]).run(context)
     time.sleep(3)
 
-    # Type 12 (Parameter Problem) - Send: Permitted
-    # Send packet with invalid IP header options
+    # ── Type 12 (Parameter Problem) — Send: Permitted ────────────────────
+    # Send packet with invalid/malformed IP header options to OpenWRT
+    # OpenWRT can't parse it → generates Type 12
     print("[*] Triggering Type 12 (Parameter Problem): Sending malformed IP options")
     cmd = f"sudo python3 -c \"from scapy.all import *; send(IP(dst='{openwrt_ip}', options=IPOption(b'\\x99\\x00\\x00\\x00'))/ICMP())\""
     StepRunner([CommandStep("tester", cmd)]).run(context)
     time.sleep(3)
 
-    # Type 5 (Redirect) - Send: NOT PERMITTED
-    # We just capture — if OpenWRT sends Type 5, it FAILS compliance
-    print("[*] Monitoring for Type 5 (Redirect): Should NOT be sent by DuT")
+    # ── Type 0 (Echo Reply) — Send: Optional ─────────────────────────────
+    # Already triggered: OpenWRT's reply to our ping is Type 0
+    # (captured when we pinged the nonsense IP and OpenWRT responded)
+    # Also: if we ping OpenWRT directly it responds with Type 0
+    print("[*] Triggering Type 0 (Echo Reply): Pinging OpenWRT directly")
+    cmd = f"ping -c 3 -W 2 {openwrt_ip}"
+    StepRunner([CommandStep("tester", cmd)]).run(context)
+    time.sleep(4)
 
-    # Type 14 (Timestamp Reply) - Send: NOT PERMITTED
-    # Send Timestamp Request, OpenWRT should NOT reply
-    print("[*] Triggering Type 14 check (Timestamp Reply): Should NOT be sent")
+    # ── Type 14 (Timestamp Reply) — Send: NOT PERMITTED ──────────────────
+    # Send Timestamp Request (Type 13) → OpenWRT should NOT reply with Type 14
+    print("[*] Triggering Type 14 check (Timestamp Reply): Should NOT be sent by DuT")
     cmd = f"sudo python3 -c \"from scapy.all import *; send(IP(dst='{openwrt_ip}')/ICMP(type=13))\""
     StepRunner([CommandStep("tester", cmd)]).run(context)
     time.sleep(3)
 
+    # ── Type 5 (Redirect) — monitoring only ──────────────────────────────
+    # If OpenWRT sends Type 5, it FAILS compliance (captured passively)
+    print("[*] Monitoring for Type 5 (Redirect): Should NOT be sent by DuT")
+
 
 def _trigger_ipv6_send(context, openwrt_ip, openwrt_pass, kali_ip, sudo_pass):
-    """Trigger IPv6 ICMP Send conditions on OpenWRT."""
-
+    """
+    Trigger IPv6 ICMPv6 Send conditions on OpenWRT.
+    """
     openwrt_ipv6 = context.openwrt_ipv6 or openwrt_ip
     kali_ipv6 = context.dut_ipv6 or kali_ip
+    nonsense_ipv6 = context.nonsense_ipv6 or "fd00:dead:beef::99"
 
-    # Type 128 (Echo Request) - Send: Permitted
+    # ── Type 128 (Echo Request) — Send: Permitted ────────────────────────
     print("[*] Triggering Type 128 (Echo Request): OpenWRT pings Kali IPv6")
     cmd = f"sshpass -p '{openwrt_pass}' ssh -o StrictHostKeyChecking=no root@{openwrt_ip} 'ping6 -c 5 -W 2 {kali_ipv6}'"
     StepRunner([CommandStep("tester", cmd)]).run(context)
     time.sleep(6)
 
-    # Type 1 (Destination Unreachable) - Send: Permitted
-    print("[*] Triggering Type 1 (Dest Unreachable): Sending to unreachable IPv6")
-    cmd = f"sudo ping6 -c 3 -W 2 fd00:dead:beef::99"
+    # ── Type 1 (Destination Unreachable) — Send: Permitted ───────────────
+    # Send packet to nonsense IPv6 routed through OpenWRT
+    print(f"[*] Triggering Type 1 (Dest Unreachable): Sending to nonsense IPv6 {nonsense_ipv6} via OpenWRT")
+    cmd = f"sudo ping6 -c 3 -W 2 {nonsense_ipv6}"
     StepRunner([CommandStep("tester", cmd)]).run(context)
     time.sleep(4)
 
-    # Type 2 (Packet Too Big) - Send: Permitted
-    print("[*] Triggering Type 2 (Packet Too Big): Sending oversized packet")
+    # ── Type 2 (Packet Too Big) — Send: Permitted ────────────────────────
+    # Send oversized packet to OpenWRT → if MTU is exceeded, it sends Type 2
+    print("[*] Triggering Type 2 (Packet Too Big): Sending oversized IPv6 packet")
     cmd = f"sudo python3 -c \"from scapy.all import *; send(IPv6(dst='{openwrt_ipv6}')/ICMPv6EchoRequest()/Raw(b'A'*2000))\""
     StepRunner([CommandStep("tester", cmd)]).run(context)
     time.sleep(3)
 
-    # Type 3 (Time Exceeded) - Send: Optional
-    print("[*] Triggering Type 3 (Time Exceeded): Sending hop-limit=1 packet")
+    # ── Type 3 (Time Exceeded) — Send: Optional ──────────────────────────
+    # Send packet with hop-limit=1 → OpenWRT decrements to 0 → sends Type 3
+    print("[*] Triggering Type 3 (Time Exceeded): Sending hop-limit=1 IPv6 packet")
     cmd = f"sudo python3 -c \"from scapy.all import *; send(IPv6(dst='{openwrt_ipv6}', hlim=1)/ICMPv6EchoRequest())\""
     StepRunner([CommandStep("tester", cmd)]).run(context)
     time.sleep(3)
 
-    # Type 4 (Parameter Problem) - Send: Permitted
-    print("[*] Triggering Type 4 (Parameter Problem): Sending malformed IPv6")
+    # ── Type 4 (Parameter Problem) — Send: Permitted ─────────────────────
+    # Send malformed IPv6 packet (invalid next header) → OpenWRT sends Type 4
+    print("[*] Triggering Type 4 (Parameter Problem): Sending malformed IPv6 (nh=255)")
     cmd = f"sudo python3 -c \"from scapy.all import *; send(IPv6(dst='{openwrt_ipv6}', nh=255)/Raw(b'\\x00'*40))\""
     StepRunner([CommandStep("tester", cmd)]).run(context)
     time.sleep(3)
 
-    # Type 135 (Neighbour Solicitation) - Send: Permitted
-    print("[*] Triggering Type 135 (Neighbour Solicitation): Probing OpenWRT")
+    # ── Type 129 (Echo Reply) — Send: Optional ───────────────────────────
+    # Ping OpenWRT directly → it responds with Type 129
+    print("[*] Triggering Type 129 (Echo Reply): Pinging OpenWRT IPv6 directly")
+    cmd = f"ping6 -c 3 -W 2 {openwrt_ipv6}"
+    StepRunner([CommandStep("tester", cmd)]).run(context)
+    time.sleep(4)
+
+    # ── Type 135 (Neighbour Solicitation) — Send: Permitted ──────────────
+    # Probe OpenWRT → it should generate NS as part of NDP
+    print("[*] Triggering Type 135 (Neighbour Solicitation): NDP probe to OpenWRT")
     cmd = f"sudo python3 -c \"from scapy.all import *; send(IPv6(dst='{openwrt_ipv6}')/ICMPv6ND_NS(tgt='{openwrt_ipv6}'))\""
     StepRunner([CommandStep("tester", cmd)]).run(context)
     time.sleep(3)
 
-    # Type 137 (Redirect) - Send: NOT PERMITTED
+    # ── Type 136 (Neighbour Advertisement) — Send: Permitted ─────────────
+    # The NS above should trigger a Type 136 NA response from OpenWRT
+    print("[*] Type 136 (Neighbour Advertisement): Should have been triggered by NS above")
+
+    # ── Type 137 (Redirect) — monitoring only ────────────────────────────
     print("[*] Monitoring for Type 137 (Redirect): Should NOT be sent by DuT")
 
 
+# ===========================================================================
+#  ETSI TABLE MAPPINGS
+#  Ref: ETSI TS 133 117 V17.2.0, Section 4.2.4.1.1.2
+# ===========================================================================
+
 def get_send_mapping_ipv4():
-    """ETSI Send column mapping for IPv4 ICMP types.
-    Ref: ETSI TS 133 117 V17.2.0 Table in Section 4.2.4.1.1.2
-    """
+    """Send column for IPv4 — types the DuT is allowed to originate."""
     return {
-        # type: (type, status)  — status is for documentation
         0:  "Optional",    # Echo Reply (auto reply to Echo Request)
         3:  "Permitted",   # Destination Unreachable
         8:  "Permitted",   # Echo Request
@@ -242,18 +406,16 @@ def get_send_mapping_ipv4():
 
 
 def get_send_not_permitted_ipv4():
-    """ETSI Send = Not Permitted for IPv4."""
+    """Send = Not Permitted for IPv4."""
     return {
-        14: "Timestamp Reply",  # Not Permitted (auto reply to Timestamp)
+        14: "Timestamp Reply",  # Not Permitted
     }
 
 
 def get_send_mapping_ipv6():
-    """ETSI Send column mapping for IPv6 ICMP types.
-    Ref: ETSI TS 133 117 V17.2.0 Table in Section 4.2.4.1.1.2
-    """
+    """Send column for IPv6 — types the DuT is allowed to originate."""
     return {
-        129: "Optional",    # Echo Reply (auto reply to Echo Request)
+        129: "Optional",    # Echo Reply
         1:   "Permitted",   # Destination Unreachable
         128: "Permitted",   # Echo Request
         3:   "Optional",    # Time Exceeded
@@ -265,16 +427,16 @@ def get_send_mapping_ipv6():
 
 
 def get_send_not_permitted_ipv6():
-    """ETSI Send = Not Permitted for IPv6.
-    Note: No IPv6 types have Send = Not Permitted in the ETSI table.
-    Redirect (137) has Process = Not Permitted, but Send = N/A.
+    """Send = Not Permitted for IPv6.
+    No IPv6 types have Send = Not Permitted in the ETSI table.
+    Redirect (137) has Process = Not Permitted, not Send.
     """
     return {}
 
 
 def get_respond_mapping_ipv4():
-    """ETSI Respond To column for IPv4 — types router SHOULD respond to.
-    Ref: ETSI TS 133 117 V17.2.0 Table in Section 4.2.4.1.1.2
+    """Respond To column for IPv4 — request type → expected reply type.
+    These are types where the DuT SHOULD respond.
     """
     return {
         8: 0,   # Echo Request → Echo Reply (Respond To = Optional)
@@ -282,15 +444,17 @@ def get_respond_mapping_ipv4():
 
 
 def get_respond_not_permitted_ipv4():
-    """ETSI Respond To = Not Permitted for IPv4."""
+    """Respond To = Not Permitted for IPv4.
+    DuT must NOT respond to these types.
+    """
     return {
-        13: {"response_type": 14, "name": "Timestamp → Timestamp Reply"},
+        13: {"response_type": 14, "name": "Timestamp Request -> Timestamp Reply"},
     }
 
 
 def get_respond_mapping_ipv6():
-    """ETSI Respond To column for IPv6 — types router SHOULD respond to.
-    Ref: ETSI TS 133 117 V17.2.0 Table in Section 4.2.4.1.1.2
+    """Respond To column for IPv6 — request type → expected reply type.
+    These are types where the DuT SHOULD respond.
     """
     return {
         128: 129,  # Echo Request → Echo Reply (Respond To = Optional)
@@ -299,27 +463,33 @@ def get_respond_mapping_ipv6():
 
 
 def get_respond_not_permitted_ipv6():
-    """ETSI Respond To = Not Permitted for IPv6."""
+    """Respond To = Not Permitted for IPv6.
+    DuT must NOT respond to these types.
+    """
     return {
-        133: {"response_type": 134, "name": "Router Solicitation → Router Advertisement"},
+        133: {"response_type": 134, "name": "Router Solicitation -> Router Advertisement"},
     }
 
 
 def get_process_not_permitted_ipv4():
-    """ETSI Process (config changes) = Not Permitted for IPv4."""
+    """Process (config changes) = Not Permitted for IPv4."""
     return {
         5: "Redirect",
     }
 
 
 def get_process_not_permitted_ipv6():
-    """ETSI Process (config changes) = Not Permitted for IPv6."""
+    """Process (config changes) = Not Permitted for IPv6."""
     return {
         137: "Redirect",
         133: "Router Solicitation",
         134: "Router Advertisement",
     }
 
+
+# ===========================================================================
+#  SEND SCREENSHOT LOOP
+# ===========================================================================
 
 def run_send_screenshot_loop(context, pcap_path, ip_version, dut_ip):
     """
@@ -371,6 +541,10 @@ def run_send_screenshot_loop(context, pcap_path, ip_version, dut_ip):
         else:
             print(f"[*] DuT did NOT send {label} Type {icmp_type} ({status} - not observed)")
 
+
+# ===========================================================================
+#  NOT PERMITTED CHECKS
+# ===========================================================================
 
 def check_not_permitted_send(context, pcap_path, ip_version, dut_ip):
     """
@@ -425,7 +599,7 @@ def check_not_permitted_send(context, pcap_path, ip_version, dut_ip):
 
 def check_not_permitted_respond(context, pcap_path, ip_version, dut_ip):
     """
-    Verify DuT does NOT respond to ICMP types where Respond To = Not Permitted per ETSI.
+    Verify DuT does NOT respond to ICMP types where Respond To = Not Permitted.
     Uses the Respond PCAP (icmp_forge.py already sent these types).
     Returns list of violations.
     """
@@ -482,7 +656,6 @@ def check_not_permitted_process(context, ip_version, dut_ip):
 
     Method: SSH into DuT, capture routing table BEFORE, send forbidden
     ICMP type, capture routing table AFTER, compare.
-    Ref: ETSI TS 133 117 Section 4.2.4.1.1.2 execution steps.
     """
     violations = []
     openwrt_ip = context.openwrt_ip
@@ -578,6 +751,10 @@ def check_not_permitted_process(context, ip_version, dut_ip):
     return violations
 
 
+# ===========================================================================
+#  PCAP VALIDATION
+# ===========================================================================
+
 def validate_pcap(context, pcap_path):
     """
     Check if PCAP captured any packets.
@@ -594,8 +771,8 @@ def validate_pcap(context, pcap_path):
         pkt_count = -1
 
     if pkt_count == 0:
-        print("[⚠] WARNING: 0 packets captured! ICMP packets may not have been sent.")
-        print("[⚠] Ensure sudo works without password prompt in tmux.")
+        print("[!] WARNING: 0 packets captured! ICMP packets may not have been sent.")
+        print("[!] Ensure sudo works without password prompt in tmux.")
         return "INCONCLUSIVE"
 
     return "PASS"

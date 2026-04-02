@@ -248,8 +248,176 @@ def verdict_banner(verdict, styles):
     return vt
 
 
+ICMP_TYPE_NAMES_V4 = {
+    0: "Echo Reply", 3: "Destination Unreachable", 5: "Redirect",
+    8: "Echo Request", 11: "Time Exceeded", 12: "Parameter Problem",
+    13: "Timestamp Request", 14: "Timestamp Reply",
+}
+ICMP_TYPE_NAMES_V6 = {
+    1: "Destination Unreachable", 2: "Packet Too Big", 3: "Time Exceeded",
+    4: "Parameter Problem", 128: "Echo Request", 129: "Echo Reply",
+    133: "Router Solicitation", 134: "Router Advertisement",
+    135: "Neighbour Solicitation", 136: "Neighbour Advertisement",
+    137: "Redirect",
+}
+
+
+def describe_screenshot(filename):
+    """
+    Generate a human-readable explanation for a screenshot based on its filename.
+    Returns a description string, or None if no meaningful description can be inferred.
+    """
+    name = os.path.splitext(os.path.basename(filename))[0].lower()
+    # Strip timestamp prefix (e.g. "2026_03_11_10-30-00_...")
+    parts = name.split("_")
+    # Find the meaningful suffix after the timestamp
+    suffix = name
+    for i, p in enumerate(parts):
+        if p in ("tester", "packet", "traceroute", "routing", "respond",
+                 "send", "process", "tcp", "udp", "sctp", "ssh", "nmap"):
+            suffix = "_".join(parts[i:])
+            break
+
+    # ── Routing evidence ──
+    if "traceroute" in suffix and "before" in suffix:
+        v = "IPv6" if "ipv6" in suffix else "IPv4"
+        return (f"Traceroute output captured BEFORE routing configuration ({v}). "
+                "Shows the default network path to the target IPs, establishing a baseline "
+                "for comparison after routes are configured through the OpenWRT router.")
+    if "traceroute" in suffix and "after" in suffix:
+        v = "IPv6" if "ipv6" in suffix else "IPv4"
+        return (f"Traceroute output captured AFTER route setup ({v}). "
+                "Confirms that packets now traverse through the OpenWRT router as the next hop, "
+                "verifying the static route configuration was applied successfully.")
+    if "routing_table" in suffix:
+        v = "IPv6" if "ipv6" in suffix else "IPv4"
+        return (f"Routing table output (ip route show) confirming the static routes "
+                f"via OpenWRT have been added ({v}). The new entries for the nonsense IP and "
+                "Metasploitable target are visible in the table.")
+
+    # ── ICMP Respond-to tests ──
+    if "respond_notpermitted" in suffix:
+        icmp_type = _extract_type(suffix)
+        v, tname = _ip_label(suffix, icmp_type)
+        return (f"Respond-to Not Permitted verification ({v}): tshark output confirming "
+                f"the DuT did NOT reply to ICMP Type {icmp_type} ({tname}). "
+                "Per ETSI TS 133 117, the DuT must not generate a response to this type. "
+                "An empty or absent response confirms compliance.")
+    if "respond" in suffix and "type" in suffix:
+        icmp_type = _extract_type(suffix)
+        v, tname = _ip_label(suffix, icmp_type)
+        return (f"Respond-to test ({v}): tshark analysis showing ICMP Type {icmp_type} "
+                f"({tname}) sent to the DuT and the expected reply. "
+                "The output shows matched request/response packets from the PCAP capture, "
+                "confirming the DuT correctly handles this ICMP type.")
+
+    # ── ICMP Send tests ──
+    if "send_notpermitted" in suffix:
+        icmp_type = _extract_type(suffix)
+        v, tname = _ip_label(suffix, icmp_type)
+        return (f"Send Not Permitted verification ({v}): tshark output confirming "
+                f"the DuT did NOT originate ICMP Type {icmp_type} ({tname}). "
+                "Per ETSI compliance, the DuT must never generate this type. "
+                "An empty result confirms the DuT is compliant.")
+    if "send" in suffix and "type" in suffix:
+        icmp_type = _extract_type(suffix)
+        v, tname = _ip_label(suffix, icmp_type)
+        return (f"Send test ({v}): tshark output showing the DuT generated ICMP Type "
+                f"{icmp_type} ({tname}) in response to the trigger condition. "
+                "The captured packets confirm the DuT correctly originates this ICMP type "
+                "when the appropriate network condition is provoked.")
+
+    # ── ICMP Process tests ──
+    if "process_before" in suffix:
+        icmp_type = _extract_type(suffix)
+        v, tname = _ip_label(suffix, icmp_type)
+        return (f"Process Not Permitted — BEFORE test ({v}): routing table snapshot "
+                f"captured before sending ICMP Type {icmp_type} ({tname}) to the DuT. "
+                "This establishes the baseline routing state. The DuT must not alter its "
+                "configuration in response to this ICMP type.")
+    if "process_after" in suffix:
+        icmp_type = _extract_type(suffix)
+        v, tname = _ip_label(suffix, icmp_type)
+        return (f"Process Not Permitted — AFTER test ({v}): routing table snapshot "
+                f"captured after sending ICMP Type {icmp_type} ({tname}) to the DuT. "
+                "Comparing with the BEFORE snapshot confirms the DuT did NOT process "
+                "or act upon this ICMP message, maintaining compliance.")
+
+    # ── Port scan evidence ──
+    if "tcp_scan_results" in suffix:
+        return ("Nmap TCP SYN scan results showing all discovered open TCP ports on the DuT. "
+                "Each open port is listed with its service name. These results are compared "
+                "against the vendor-documented list of required services.")
+    if "udp_scan_results" in suffix:
+        return ("Nmap UDP scan results showing all discovered open UDP ports on the DuT. "
+                "UDP scanning identifies services that respond to connectionless probes. "
+                "Only vendor-documented UDP services should be found open.")
+    if "sctp_scan_results" in suffix:
+        return ("Nmap SCTP INIT scan results showing discovered open SCTP ports on the DuT. "
+                "SCTP is used in telecom signaling; only documented SCTP services should respond.")
+    if "tcp_port_" in suffix:
+        port = suffix.split("tcp_port_")[-1].split("_")[0]
+        return (f"Wireshark packet capture showing the TCP SYN/SYN-ACK handshake for port {port}, "
+                f"confirming this port is open and responsive on the DuT. The three-way handshake "
+                "sequence (SYN → SYN-ACK → ACK) is visible in the capture.")
+    if "udp_port_" in suffix:
+        port = suffix.split("udp_port_")[-1].split("_")[0]
+        return (f"Wireshark packet capture showing the UDP request/response for port {port}. "
+                "The presence of a response packet confirms this UDP port is open and active "
+                "on the DuT.")
+    if "sctp_port_" in suffix:
+        port = suffix.split("sctp_port_")[-1].split("_")[0]
+        return (f"Wireshark packet capture showing the SCTP INIT/INIT-ACK exchange for port {port}, "
+                "confirming this SCTP port is open on the DuT.")
+
+    # ── SSH / crypto evidence ──
+    if "ssh" in suffix or "cipher" in suffix or "crypto" in suffix:
+        return ("Terminal screenshot showing SSH/TLS cryptographic algorithm enumeration "
+                "or handshake capture results. This evidence documents the security "
+                "protocols negotiated between the tester and the DuT.")
+    if "nmap" in suffix:
+        return ("Nmap scan output showing the enumerated services and security configuration "
+                "of the DuT. This evidence supports the compliance assessment.")
+
+    # ── Wireshark packet screenshots ──
+    if "packet" in suffix or "wireshark" in suffix:
+        return ("Wireshark packet capture screenshot showing the relevant network traffic "
+                "for this test case. The display filter highlights the specific packets "
+                "that evidence the test result.")
+
+    # ── Generic terminal screenshot ──
+    if "tester" in suffix:
+        return ("Terminal screenshot showing the test execution output on the tester system. "
+                "The command output and results are captured as evidence for this test case.")
+
+    return None
+
+
+def _extract_type(suffix):
+    """Extract ICMP type number from a suffix like '...type_8' or '...type_128'."""
+    try:
+        idx = suffix.index("type_")
+        rest = suffix[idx + 5:]
+        num = ""
+        for ch in rest:
+            if ch.isdigit():
+                num += ch
+            else:
+                break
+        return int(num) if num else 0
+    except (ValueError, IndexError):
+        return 0
+
+
+def _ip_label(suffix, icmp_type):
+    """Return (label, type_name) based on whether suffix is IPv4 or IPv6."""
+    if "ipv6" in suffix:
+        return "IPv6", ICMP_TYPE_NAMES_V6.get(icmp_type, f"Type {icmp_type}")
+    return "IPv4", ICMP_TYPE_NAMES_V4.get(icmp_type, f"Type {icmp_type}")
+
+
 def screenshot_block(evidence_files, label, styles):
-    """Embed PNG screenshots scaled to fit within page margins."""
+    """Embed PNG screenshots with explanatory descriptions below each image."""
     items = []
     for ef in (evidence_files or []):
         if not ef or not str(ef).endswith(".png") or not os.path.exists(ef):
@@ -267,8 +435,16 @@ def screenshot_block(evidence_files, label, styles):
                 Spacer(1, 2 * mm),
                 Paragraph(f"<b>Screenshot Evidence -- {label}:</b>", styles["SmallGrey"]),
                 img,
-                Spacer(1, 2 * mm),
             ]
+
+            # Add explanation below the image
+            desc = describe_screenshot(ef)
+            if desc:
+                items.append(Spacer(1, 1 * mm))
+                items.append(Paragraph(
+                    f"<i>{desc}</i>", styles["BodyText"]))
+            items.append(Spacer(1, 3 * mm))
+
         except Exception as ex:
             items.append(Paragraph(f"[Screenshot error: {ex}]", styles["SmallGrey"]))
     return items

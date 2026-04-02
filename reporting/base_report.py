@@ -350,7 +350,9 @@ class BaseReport:
     # EMBED ALL SCREENSHOTS FOR A TEST CASE
     # ─────────────────────────────────────────
     def embed_testcase_screenshots(self, doc, clause, testcase_name, label_prefix=""):
-        """Find and embed all screenshots for a test case."""
+        """Find and embed all screenshots for a test case, with explanations."""
+        from reporting.pdf_base import describe_screenshot
+
         screenshots = self.find_screenshots(clause, testcase_name)
         for img_path in screenshots:
             basename = os.path.splitext(os.path.basename(img_path))[0]
@@ -361,6 +363,15 @@ class BaseReport:
             else:
                 title = f"{label_prefix}{basename}" if label_prefix else basename
             self.add_screenshot_block(doc, title, img_path)
+
+            # Add explanation below the image
+            desc = describe_screenshot(img_path)
+            if desc:
+                p = doc.add_paragraph()
+                run = p.add_run(desc)
+                run.italic = True
+                run.font.size = Pt(9)
+                run.font.color.rgb = RGBColor(0x6C, 0x75, 0x7D)  # grey
             doc.add_paragraph()
 
     # ─────────────────────────────────────────

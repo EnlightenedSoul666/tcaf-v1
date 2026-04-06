@@ -364,14 +364,20 @@ class BaseReport:
                 title = f"{label_prefix}{basename}" if label_prefix else basename
             self.add_screenshot_block(doc, title, img_path)
 
-            # Add explanation below the image
+            # Add Observations paragraph below the image
             desc = describe_screenshot(img_path)
             if desc:
-                p = doc.add_paragraph()
-                run = p.add_run(desc)
-                run.italic = True
-                run.font.size = Pt(9)
-                run.font.color.rgb = RGBColor(0x6C, 0x75, 0x7D)  # grey
+                obs_heading = doc.add_paragraph()
+                obs_run = obs_heading.add_run("Observations:")
+                obs_run.bold = True
+                obs_run.font.size = Pt(10)
+                obs_run.font.color.rgb = PURPLE
+
+                obs_para = doc.add_paragraph()
+                obs_text = obs_para.add_run(desc)
+                obs_text.italic = True
+                obs_text.font.size = Pt(9)
+                obs_text.font.color.rgb = RGBColor(0x6C, 0x75, 0x7D)  # grey
             doc.add_paragraph()
 
     # ─────────────────────────────────────────

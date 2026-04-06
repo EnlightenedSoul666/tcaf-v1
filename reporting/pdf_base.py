@@ -299,10 +299,15 @@ def describe_screenshot(filename):
     if "respond_notpermitted" in suffix:
         icmp_type = _extract_type(suffix)
         v, tname = _ip_label(suffix, icmp_type)
-        return (f"Respond-to Not Permitted verification ({v}): tshark output confirming "
-                f"the DuT did NOT reply to ICMP Type {icmp_type} ({tname}). "
+        if suffix.startswith("frame_"):
+            return (f"Respond-to Not Permitted VIOLATION ({v}): Wireshark capture showing "
+                    f"the DuT DID reply to ICMP Type {icmp_type} ({tname}). "
+                    "Per ETSI TS 133 117, the DuT must not generate a response to this type. "
+                    "The presence of a reply packet indicates NON-COMPLIANCE.")
+        return (f"Respond-to Not Permitted verification ({v}): tshark output for "
+                f"ICMP Type {icmp_type} ({tname}). "
                 "Per ETSI TS 133 117, the DuT must not generate a response to this type. "
-                "An empty or absent response confirms compliance.")
+                "An empty or absent response confirms compliance; any reply indicates a violation.")
     if "respond" in suffix and "type" in suffix:
         icmp_type = _extract_type(suffix)
         v, tname = _ip_label(suffix, icmp_type)
@@ -315,10 +320,15 @@ def describe_screenshot(filename):
     if "send_notpermitted" in suffix:
         icmp_type = _extract_type(suffix)
         v, tname = _ip_label(suffix, icmp_type)
-        return (f"Send Not Permitted verification ({v}): tshark output confirming "
-                f"the DuT did NOT originate ICMP Type {icmp_type} ({tname}). "
+        if suffix.startswith("frame_"):
+            return (f"Send Not Permitted VIOLATION ({v}): Wireshark capture showing "
+                    f"the DuT DID originate ICMP Type {icmp_type} ({tname}). "
+                    "Per ETSI compliance, the DuT must never generate this type. "
+                    "The presence of this packet indicates NON-COMPLIANCE.")
+        return (f"Send Not Permitted verification ({v}): tshark output for "
+                f"ICMP Type {icmp_type} ({tname}). "
                 "Per ETSI compliance, the DuT must never generate this type. "
-                "An empty result confirms the DuT is compliant.")
+                "An empty result confirms compliance; any packet indicates a violation.")
     if "send" in suffix and "type" in suffix:
         icmp_type = _extract_type(suffix)
         v, tname = _ip_label(suffix, icmp_type)
@@ -437,10 +447,12 @@ def screenshot_block(evidence_files, label, styles):
                 img,
             ]
 
-            # Add explanation below the image
+            # Add Observations paragraph below the image
             desc = describe_screenshot(ef)
             if desc:
-                items.append(Spacer(1, 1 * mm))
+                items.append(Spacer(1, 2 * mm))
+                items.append(Paragraph(
+                    "<b>Observations:</b>", styles["LabelBold"]))
                 items.append(Paragraph(
                     f"<i>{desc}</i>", styles["BodyText"]))
             items.append(Spacer(1, 3 * mm))

@@ -9,9 +9,9 @@ def setup_logger():
     Initialize the global ITSAR compliance logger.
     """
 
-    log_file = settings.LOG_DIR / "tcaf.log"
+    log_file = settings.LOG_DIR / "icaf.log"
 
-    logger = logging.getLogger("tcaf")
+    logger = logging.getLogger("icaf")
     logger.setLevel(settings.LOG_LEVEL)
 
     if logger.handlers:

@@ -261,6 +261,16 @@ def run_screenshot_loop(context, pcap_path, type_mapping, ip_version, target_ip,
         else:
             print(f"[*] No packets for {label} Type {req_type} ({test_label}). Skipping Wireshark.")
 
+        # 5. Record per-type sub-result (permitted types)
+        context.current_testcase.sub_results.append({
+            "test_type": "Respond To",
+            "icmp_type": req_type,
+            "icmp_name": f"{label} Type {req_type} -> Type {expected_reply}",
+            "ip_version": ip_version,
+            "status": "PASS",
+            "category": "Permitted",
+        })
+
 
 # ===========================================================================
 #  SEND TESTS (Trigger DuT to generate ICMP, capture on our machine)
@@ -583,6 +593,16 @@ def run_send_screenshot_loop(context, pcap_path, ip_version, dut_ip):
         else:
             print(f"[*] DuT did NOT send {label} Type {icmp_type} ({status} - not observed)")
 
+        # 5. Record per-type sub-result (permitted/optional Send types)
+        context.current_testcase.sub_results.append({
+            "test_type": "Send",
+            "icmp_type": icmp_type,
+            "icmp_name": f"{label} Type {icmp_type}",
+            "ip_version": ip_version,
+            "status": "PASS",
+            "category": status,
+        })
+
 
 # ===========================================================================
 #  NOT PERMITTED CHECKS
@@ -633,8 +653,24 @@ def check_not_permitted_send(context, pcap_path, ip_version, dut_ip):
                 display_filter=tshark_filter
             )]).run(context)
             violations.append(icmp_type)
+            context.current_testcase.sub_results.append({
+                "test_type": "Send",
+                "icmp_type": icmp_type,
+                "icmp_name": name,
+                "ip_version": ip_version,
+                "status": "FAIL",
+                "category": "Not Permitted",
+            })
         else:
             print(f"[PASS] DuT did NOT send Type {icmp_type} ({name})")
+            context.current_testcase.sub_results.append({
+                "test_type": "Send",
+                "icmp_type": icmp_type,
+                "icmp_name": name,
+                "ip_version": ip_version,
+                "status": "PASS",
+                "category": "Not Permitted",
+            })
 
     return violations
 
@@ -685,8 +721,24 @@ def check_not_permitted_respond(context, pcap_path, ip_version, dut_ip):
                 display_filter=tshark_filter
             )]).run(context)
             violations.append(req_type)
+            context.current_testcase.sub_results.append({
+                "test_type": "Respond To",
+                "icmp_type": req_type,
+                "icmp_name": name,
+                "ip_version": ip_version,
+                "status": "FAIL",
+                "category": "Not Permitted",
+            })
         else:
             print(f"[PASS] DuT did NOT respond to Type {req_type} ({name})")
+            context.current_testcase.sub_results.append({
+                "test_type": "Respond To",
+                "icmp_type": req_type,
+                "icmp_name": name,
+                "ip_version": ip_version,
+                "status": "PASS",
+                "category": "Not Permitted",
+            })
 
     return violations
 
@@ -786,9 +838,25 @@ def check_not_permitted_process(context, ip_version, dut_ip):
         # 4. Compare routing tables
         if route_before.strip() == route_after.strip():
             print(f"[PASS] DuT config UNCHANGED after Type {icmp_type} ({name})")
+            context.current_testcase.sub_results.append({
+                "test_type": "Process",
+                "icmp_type": icmp_type,
+                "icmp_name": name,
+                "ip_version": ip_version,
+                "status": "PASS",
+                "category": "Not Permitted",
+            })
         else:
             print(f"[FAIL] VIOLATION: DuT config CHANGED after Type {icmp_type} ({name})!")
             violations.append(icmp_type)
+            context.current_testcase.sub_results.append({
+                "test_type": "Process",
+                "icmp_type": icmp_type,
+                "icmp_name": name,
+                "ip_version": ip_version,
+                "status": "FAIL",
+                "category": "Not Permitted",
+            })
 
     return violations
 

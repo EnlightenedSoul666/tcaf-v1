@@ -8,6 +8,7 @@ class TestCase:
         self.steps = []
         self.evidence = []
         self.status = "NOT_RUN"
+        self.sub_results = []  # Per-test PASS/FAIL for individual checks
 
     def add_step(self, step):
 

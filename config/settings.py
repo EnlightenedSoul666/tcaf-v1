@@ -17,8 +17,8 @@ class Settings:
     SSH_TIMEOUT = 10
 
     # Framework metadata
-    FRAMEWORK_NAME = "ITSAR"
-    FRAMEWORK_FULL_NAME = "ITSAR Compliance Automation Framework"
+    FRAMEWORK_NAME = "ICAF"
+    FRAMEWORK_FULL_NAME = "ICAF - Indian Compliance Authority Framework"
     VERSION = "0.1"
 
 

@@ -23,48 +23,67 @@ def run(
     clause_class = CLAUSE_REGISTRY.get(clause)
     has_auxiliary = clause_class and getattr(clause_class, "REQUIRES_AUXILIARY", False)
 
-    # Always ask for DuT IP (needed by all clauses)
+    # ==================================================================
+    # DuT / OpenWRT IP
+    # For auxiliary clauses (ICMP): DuT IS the OpenWRT router — ask once
+    # For other clauses: ask for DuT IP only
+    # ==================================================================
+    openwrt_ip = None
+    openwrt_ipv6 = None
+    openwrt_password = None
+
     if has_auxiliary:
-        dut_ip = input("Enter DuT (Metasploitable) IP address: ")
+        # DuT = OpenWRT router (single prompt, no separate DuT/OpenWRT)
+        openwrt_ip = input("Enter DuT (OpenWRT Router) IP address: ")
+        dut_ip = openwrt_ip  # they are the same
+        openwrt_password = getpass.getpass("Enter OpenWRT root password: ")
     else:
         dut_ip = input("Enter DuT IP address: ")
 
-    # IPv6: skip manual prompt for auxiliary clauses (auto-discovered via SSH)
+    # ==================================================================
+    # IPv6 — skip for auxiliary clauses (auto-discovered via SSH)
+    # ==================================================================
     dut_ipv6 = None
     if clause_class and clause_class.REQUIRES_IPV6 and not has_auxiliary:
         dut_ipv6 = input("Enter DuT IPv6 address: ")
 
+    # ==================================================================
+    # SSH credentials (for SSH-based clauses like 1.1.1)
+    # ==================================================================
     ssh_user = None
     ssh_password = None
     if clause_class and clause_class.REQUIRES_SSH:
         ssh_user = input("Enter SSH username: ")
         ssh_password = getpass.getpass("Enter SSH password: ")
 
+    # ==================================================================
+    # Sudo password (for Kali)
+    # ==================================================================
     sudo_password = None
     if clause_class and clause_class.REQUIRES_SUDO:
         sudo_password = getpass.getpass("Enter sudo password (for Kali): ")
 
-    openwrt_ip = None
-    openwrt_ipv6 = None
-    openwrt_password = None
-    if clause_class and clause_class.REQUIRES_OPENWRT:
+    # ==================================================================
+    # OpenWRT — for non-auxiliary clauses that need it
+    # ==================================================================
+    if clause_class and clause_class.REQUIRES_OPENWRT and not has_auxiliary:
         openwrt_ip = input("Enter OpenWRT (DuT router) IP address: ")
-        # Skip IPv6 for auxiliary clauses (auto-discovered via SSH)
-        if not has_auxiliary:
-            openwrt_ipv6 = input("Enter OpenWRT (DuT router) IPv6 address: ")
+        openwrt_ipv6 = input("Enter OpenWRT (DuT router) IPv6 address: ")
         openwrt_password = getpass.getpass("Enter OpenWRT root password: ")
 
-    # Auxiliary machine (e.g. Metasploitable for ICMP Redirect tests)
+    # ==================================================================
+    # Auxiliary machine (Metasploitable — for ICMP Redirect tests)
+    # ==================================================================
     metasploitable_ip = None
     metasploitable_user = None
     metasploitable_password = None
     nonsense_ip = None
     nonsense_ipv6 = None
     if has_auxiliary:
-        metasploitable_ip   = input("Enter auxiliary machine (Metasploitable) IPv4 address: ")
+        metasploitable_ip = input("Enter auxiliary machine (Metasploitable) IPv4 address: ")
         metasploitable_user = input("Enter Metasploitable SSH username: ")
         metasploitable_password = getpass.getpass("Enter Metasploitable SSH password: ")
-        nonsense_ip   = input("Enter nonsense IPv4 address (unreachable): ")
+        nonsense_ip = input("Enter nonsense IPv4 address (unreachable): ")
         nonsense_ipv6 = input("Enter nonsense IPv6 address (unreachable): ")
         print("  (IPv6 addresses will be auto-discovered via SSH)")
 

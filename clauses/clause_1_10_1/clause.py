@@ -51,33 +51,39 @@ class Clause_1_10_1(BaseClause):
 
     def prepare_context(self):
         """
-        1. Map auxiliary machine IPs (Metasploitable) onto generic attributes
-        2. Auto-discover IPv6 addresses via SSH
-        3. Strip any IPv6 prefix lengths
+        1. Ensure DuT = OpenWRT (same IP)
+        2. Map auxiliary machine IPs (Metasploitable) onto generic attributes
+        3. Auto-discover IPv6 addresses via SSH (before PCAP starts)
+        4. Strip any IPv6 prefix lengths
         """
+        # ── DuT = OpenWRT ────────────────────────────────────────────────────
+        if self.context.openwrt_ip:
+            self.context.dut_ip = self.context.openwrt_ip
+
         self.context.auxiliary_ip = getattr(self.context, "metasploitable_ip", None)
 
-        # ── Auto-discover IPv6 addresses ─────────────────────────────────
+        # ── Auto-discover IPv6 addresses via SSH ─────────────────────────────
+        # This runs BEFORE any PCAP capture, so SSH packets won't contaminate
         print("\n[*] Auto-discovering IPv6 addresses via SSH...")
 
-        # OpenWRT
+        # OpenWRT → becomes DuT IPv6
         if self.context.openwrt_ip and self.context.openwrt_password:
             ipv6 = _discover_ipv6_via_ssh(
                 self.context.openwrt_ip, "root", self.context.openwrt_password)
             if ipv6:
                 self.context.openwrt_ipv6 = ipv6
-                print(f"    OpenWRT ({self.context.openwrt_ip}):        {ipv6}")
+                self.context.dut_ipv6 = ipv6   # DuT IS OpenWRT
+                print(f"    OpenWRT / DuT ({self.context.openwrt_ip}):  {ipv6}")
             else:
-                print(f"    OpenWRT ({self.context.openwrt_ip}):        [not found]")
+                print(f"    OpenWRT / DuT ({self.context.openwrt_ip}):  [not found]")
 
-        # Metasploitable (auxiliary machine)
+        # Metasploitable → becomes auxiliary IPv6
         meta_ip = getattr(self.context, "metasploitable_ip", None)
         meta_user = getattr(self.context, "metasploitable_user", None)
         meta_pass = getattr(self.context, "metasploitable_password", None)
         if meta_ip and meta_user and meta_pass:
             ipv6 = _discover_ipv6_via_ssh(meta_ip, meta_user, meta_pass)
             if ipv6:
-                self.context.dut_ipv6 = ipv6
                 self.context.auxiliary_ipv6 = ipv6
                 print(f"    Metasploitable ({meta_ip}):  {ipv6}")
             else:
@@ -87,7 +93,7 @@ class Clause_1_10_1(BaseClause):
         if not getattr(self.context, "auxiliary_ipv6", None):
             self.context.auxiliary_ipv6 = getattr(self.context, "metasploitable_ipv6", None)
 
-        # ── Strip prefix lengths from all IPv6 addresses ─────────────────
+        # ── Strip prefix lengths from all IPv6 addresses ─────────────────────
         for attr in ("dut_ipv6", "openwrt_ipv6", "auxiliary_ipv6", "nonsense_ipv6"):
             val = getattr(self.context, attr, None)
             if val and "/" in val:

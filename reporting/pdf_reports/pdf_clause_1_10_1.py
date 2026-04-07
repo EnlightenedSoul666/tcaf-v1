@@ -360,14 +360,14 @@ class PDFClause1101Report(PDFReportBase):
 
         story += sub_heading("6.5 Test Execution Steps", styles)
         for step in [
+            "Set up routing so packets to nonsense/auxiliary IPs go through the DuT (OpenWRT).",
             "Start packet capture on the tester interface using tcpdump.",
-            "Send each ICMP type packet to the DUT using Scapy's icmp_forge module.",
-            "Wait for DUT responses (timeout for not-permitted types).",
-            "Stop the packet capture.",
-            "Analyze the captured pcap using tshark to verify request/response pairs.",
-            "Take Wireshark screenshots showing the request and response packets.",
-            "For Send tests: trigger the DUT to generate specific ICMP types.",
-            "For Process tests: send forbidden types and verify no configuration change.",
+            "Send each purposeful ICMP packet (ping, TTL=1, malformed options, etc.) to trigger a specific response.",
+            "Wait for DuT responses and stop the packet capture.",
+            "Analyze the captured PCAP using tshark to verify each expected response.",
+            "Take terminal and Wireshark screenshots with educational descriptions for each test.",
+            "For Not Permitted tests: verify the DuT does NOT send the forbidden response type.",
+            "For Process tests: send Redirect/RS/RA and verify no routing configuration change.",
         ]:
             story.append(bullet(step, styles))
         story.append(Spacer(1, 4))

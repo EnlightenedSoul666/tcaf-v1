@@ -9,6 +9,7 @@ class Engine:
     def __init__(self, clause=None, section=None, ssh_user=None, dut_ip=None, ssh_password=None, dut_ipv6=None,
                  sudo_password=None, openwrt_ip=None, openwrt_ipv6=None, openwrt_password=None,
                  metasploitable_ip=None, metasploitable_ipv6=None,
+                 metasploitable_user=None, metasploitable_password=None,
                  nonsense_ip=None, nonsense_ipv6=None):
 
         self.context = RuntimeContext(
@@ -24,6 +25,8 @@ class Engine:
             openwrt_password=openwrt_password,
             metasploitable_ip=metasploitable_ip,
             metasploitable_ipv6=metasploitable_ipv6,
+            metasploitable_user=metasploitable_user,
+            metasploitable_password=metasploitable_password,
             nonsense_ip=nonsense_ip,
             nonsense_ipv6=nonsense_ipv6,
         )

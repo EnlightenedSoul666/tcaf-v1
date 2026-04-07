@@ -171,6 +171,12 @@ def teardown_routing(context, ip_version):
             cmd = f"sudo ip -6 route del {meta_ipv6}/128 via {openwrt_ipv6} 2>/dev/null"
             StepRunner([CommandStep("tester", cmd)]).run(context)
 
+    # Flush any redirect cache entries
+    if ip_version == 4:
+        StepRunner([CommandStep("tester", "sudo ip route flush cache 2>/dev/null")]).run(context)
+    else:
+        StepRunner([CommandStep("tester", "sudo ip -6 route flush cache 2>/dev/null")]).run(context)
+
     print(f"[*] Routing cleanup complete (IPv{ip_version})")
 
 
@@ -743,15 +749,219 @@ def check_not_permitted_respond(context, pcap_path, ip_version, dut_ip):
     return violations
 
 
+def _test_redirect_real(context, ip_version, icmp_type, name, aux_ip, openwrt_ip, sudo_pass):
+    """
+    Test ICMP Redirect using real network conditions:
+      1. Force route to auxiliary machine through OpenWRT
+      2. Start PCAP capture
+      3. Traceroute BEFORE (should show OpenWRT as intermediate hop)
+      4. Ping auxiliary machine — OpenWRT sees same-subnet destination
+         and sends Redirect back to Kali
+      5. Wait for Redirect to be processed
+      6. Traceroute AFTER (should show direct route — Redirect was sent)
+      7. Stop PCAP, analyze for Redirect packet
+      8. Clean up: remove forced route, flush redirect cache
+    """
+    openwrt_ipv6 = context.openwrt_ipv6 or openwrt_ip
+
+    # ── 1. Force route through OpenWRT ───────────────────────────────────
+    StepRunner([CommandStep("tester", f"echo '{sudo_pass}' | sudo -S true")]).run(context)
+    time.sleep(1)
+    if ip_version == 4:
+        route_cmd = f"sudo ip route replace {aux_ip}/32 via {openwrt_ip}"
+    else:
+        route_cmd = f"sudo ip -6 route replace {aux_ip}/128 via {openwrt_ipv6}"
+    print(f"[*] Setting route: {aux_ip} via {'OpenWRT'}")
+    StepRunner([CommandStep("tester", route_cmd)]).run(context)
+    time.sleep(1)
+
+    # ── 2. Start PCAP ────────────────────────────────────────────────────
+    pcap_filename = f"icmp_ipv{ip_version}_redirect.pcapng"
+    StepRunner([PcapStartStep(interface="eth0", filename=pcap_filename)]).run(context)
+
+    # ── 3. Traceroute BEFORE ─────────────────────────────────────────────
+    StepRunner([CommandStep("tester", "clear")]).run(context)
+    StepRunner([CommandStep("tester",
+        f"echo -e '\\n=== REDIRECT TEST: Type {icmp_type} ({name}) ==='"
+    )]).run(context)
+    StepRunner([CommandStep("tester", f"echo '--- BEFORE Redirect ---'")]).run(context)
+
+    if ip_version == 4:
+        tr_cmd = f"traceroute -n -m 5 -w 2 {aux_ip}"
+    else:
+        tr_cmd = f"traceroute6 -n -m 5 -w 2 {aux_ip}"
+
+    StepRunner([CommandStep("tester", tr_cmd)]).run(context)
+    time.sleep(8)
+    route_before = context.terminal_manager.capture_output("tester")
+    StepRunner([ScreenshotStep(
+        terminal="tester",
+        suffix=f"redirect_before_ipv{ip_version}_type_{icmp_type}"
+    )]).run(context)
+
+    # ── 4. Ping auxiliary machine to trigger Redirect from OpenWRT ───────
+    print(f"[*] Pinging {aux_ip} to trigger Redirect from OpenWRT...")
+    StepRunner([CommandStep("tester", "clear")]).run(context)
+    StepRunner([CommandStep("tester", f"echo '--- Pinging to trigger Redirect ---'")]).run(context)
+    if ip_version == 4:
+        ping_cmd = f"ping -c 5 -W 2 {aux_ip}"
+    else:
+        ping_cmd = f"ping6 -c 5 -W 2 {aux_ip}"
+    StepRunner([CommandStep("tester", ping_cmd)]).run(context)
+    time.sleep(7)
+    StepRunner([ScreenshotStep(
+        terminal="tester",
+        suffix=f"redirect_ping_ipv{ip_version}_type_{icmp_type}"
+    )]).run(context)
+
+    # ── 5. Traceroute AFTER ──────────────────────────────────────────────
+    print(f"[*] Traceroute AFTER Redirect...")
+    StepRunner([CommandStep("tester", "clear")]).run(context)
+    StepRunner([CommandStep("tester", f"echo '--- AFTER Redirect ---'")]).run(context)
+    StepRunner([CommandStep("tester", tr_cmd)]).run(context)
+    time.sleep(8)
+    route_after = context.terminal_manager.capture_output("tester")
+    StepRunner([ScreenshotStep(
+        terminal="tester",
+        suffix=f"redirect_after_ipv{ip_version}_type_{icmp_type}"
+    )]).run(context)
+
+    # ── 6. Stop PCAP ─────────────────────────────────────────────────────
+    StepRunner([PcapStopStep()]).run(context)
+
+    # ── 7. Analyze PCAP for Redirect packet ──────────────────────────────
+    pcap_path = context.pcap_file
+    if ip_version == 4:
+        redirect_filter = f"icmp.type == 5 and ip.src == {openwrt_ip}"
+    else:
+        redirect_filter = f"icmpv6.type == 137 and ipv6.src == {openwrt_ipv6}"
+
+    StepRunner([CommandStep("tester", "clear")]).run(context)
+    StepRunner([CommandStep("tester",
+        f"echo '=== Checking PCAP for Redirect (Type {icmp_type}) ==='"
+    )]).run(context)
+    tshark_cmd = f"tshark -r {pcap_path} -Y '{redirect_filter}'"
+    StepRunner([CommandStep("tester", tshark_cmd)]).run(context)
+    time.sleep(2)
+    StepRunner([ScreenshotStep(
+        terminal="tester",
+        suffix=f"redirect_pcap_ipv{ip_version}_type_{icmp_type}"
+    )]).run(context)
+
+    StepRunner([AnalyzePcapStep(filter_expr=redirect_filter)]).run(context)
+    redirect_found = context.matched_frame is not None
+
+    if redirect_found:
+        print(f"[+] Redirect (Type {icmp_type}) captured in PCAP")
+        StepRunner([WiresharkPacketScreenshotStep(
+            suffix=f"redirect_packet_ipv{ip_version}_type_{icmp_type}",
+            display_filter=redirect_filter
+        )]).run(context)
+    else:
+        print(f"[-] No Redirect (Type {icmp_type}) found in PCAP")
+
+    # ── 8. Clean up route and redirect cache ─────────────────────────────
+    if ip_version == 4:
+        StepRunner([CommandStep("tester",
+            f"sudo ip route del {aux_ip}/32 via {openwrt_ip} 2>/dev/null"
+        )]).run(context)
+        StepRunner([CommandStep("tester", "sudo ip route flush cache 2>/dev/null")]).run(context)
+    else:
+        StepRunner([CommandStep("tester",
+            f"sudo ip -6 route del {aux_ip}/128 via {openwrt_ipv6} 2>/dev/null"
+        )]).run(context)
+        StepRunner([CommandStep("tester", "sudo ip -6 route flush cache 2>/dev/null")]).run(context)
+    time.sleep(1)
+
+    # ── 9. Determine result ──────────────────────────────────────────────
+    route_changed = route_before.strip() != route_after.strip()
+
+    if redirect_found:
+        print(f"[PASS] OpenWRT correctly sent Redirect (Type {icmp_type})")
+        status = "PASS"
+    else:
+        print(f"[FAIL] OpenWRT did NOT send Redirect (Type {icmp_type})")
+        status = "FAIL"
+
+    return status
+
+
+def _test_process_crafted(context, ip_version, icmp_type, name, aux_ip, openwrt_ip, sudo_pass):
+    """
+    Test Process = Not Permitted for non-Redirect types (RS, RA).
+    Send a crafted ICMPv6 packet to the DuT and verify its routing
+    does not change (traceroute before == traceroute after).
+    """
+    openwrt_ipv6 = context.openwrt_ipv6 or openwrt_ip
+
+    if ip_version == 4:
+        traceroute_cmd = f"traceroute -n -m 5 -w 2 {aux_ip}"
+    else:
+        traceroute_cmd = f"traceroute6 -n -m 5 -w 2 {aux_ip}"
+
+    # 1. Traceroute BEFORE
+    print(f"[*] Traceroute BEFORE sending Type {icmp_type}")
+    StepRunner([CommandStep("tester", f"echo '--- BEFORE Type {icmp_type} ---'")]).run(context)
+    StepRunner([CommandStep("tester", traceroute_cmd)]).run(context)
+    time.sleep(8)
+    route_before = context.terminal_manager.capture_output("tester")
+    StepRunner([ScreenshotStep(
+        terminal="tester",
+        suffix=f"process_before_ipv{ip_version}_type_{icmp_type}"
+    )]).run(context)
+
+    # 2. Send crafted packet
+    print(f"[*] Sending Type {icmp_type} ({name}) to DuT (OpenWRT)...")
+    StepRunner([CommandStep("tester", f"echo '{sudo_pass}' | sudo -S true")]).run(context)
+    time.sleep(1)
+
+    if icmp_type == 133:
+        send_cmd = (
+            f"sudo python3 -c \""
+            f"from scapy.all import *; "
+            f"send(IPv6(dst='{openwrt_ipv6}')/ICMPv6ND_RS())\""
+        )
+    elif icmp_type == 134:
+        send_cmd = (
+            f"sudo python3 -c \""
+            f"from scapy.all import *; "
+            f"send(IPv6(dst='{openwrt_ipv6}')/ICMPv6ND_RA())\""
+        )
+    else:
+        return "SKIPPED"
+
+    StepRunner([CommandStep("tester", send_cmd)]).run(context)
+    time.sleep(3)
+
+    # 3. Traceroute AFTER
+    print(f"[*] Traceroute AFTER sending Type {icmp_type}")
+    StepRunner([CommandStep("tester", "clear")]).run(context)
+    StepRunner([CommandStep("tester", f"echo '--- AFTER Type {icmp_type} ---'")]).run(context)
+    StepRunner([CommandStep("tester", traceroute_cmd)]).run(context)
+    time.sleep(8)
+    route_after = context.terminal_manager.capture_output("tester")
+    StepRunner([ScreenshotStep(
+        terminal="tester",
+        suffix=f"process_after_ipv{ip_version}_type_{icmp_type}"
+    )]).run(context)
+
+    # 4. Compare
+    if route_before.strip() == route_after.strip():
+        print(f"[PASS] DuT config UNCHANGED after Type {icmp_type} ({name})")
+        return "PASS"
+    else:
+        print(f"[FAIL] VIOLATION: DuT config CHANGED after Type {icmp_type} ({name})!")
+        return "FAIL"
+
+
 def check_not_permitted_process(context, ip_version, dut_ip):
     """
-    Verify DuT does NOT process (change configuration) for ICMP types
-    where Process = Not Permitted per ETSI.
+    Test Process = Not Permitted ICMP types per ETSI.
 
-    Method: Run traceroute to auxiliary machine BEFORE, send forbidden
-    ICMP type to DuT, run traceroute AFTER, compare paths.
-    If the DuT processed the forbidden type (e.g. Redirect), the
-    traceroute path would change — which must NOT happen.
+    - Redirect (Type 5 / 137): Real network test — force route through
+      OpenWRT, ping auxiliary machine, capture Redirect from OpenWRT.
+    - RS/RA (Type 133/134): Send crafted packet, compare traceroute
+      before/after to verify DuT doesn't change config.
     """
     violations = []
     openwrt_ip = context.openwrt_ip
@@ -762,17 +972,14 @@ def check_not_permitted_process(context, ip_version, dut_ip):
         print("[-] DuT (OpenWRT) credentials not provided. Skipping Process tests.")
         return violations
 
-    # Determine the traceroute target (auxiliary machine)
     if ip_version == 4:
         process_types = get_process_not_permitted_ipv4()
         aux_ip = context.auxiliary_ip
-        traceroute_cmd = f"traceroute -n -m 5 -w 2 {aux_ip}" if aux_ip else None
     else:
         process_types = get_process_not_permitted_ipv6()
         aux_ip = context.auxiliary_ipv6
-        traceroute_cmd = f"traceroute6 -n -m 5 -w 2 {aux_ip}" if aux_ip else None
 
-    if not traceroute_cmd:
+    if not aux_ip:
         print(f"[-] No auxiliary machine IPv{ip_version} address. Skipping Process tests.")
         return violations
 
@@ -781,93 +988,26 @@ def check_not_permitted_process(context, ip_version, dut_ip):
         header_cmd = f"echo -e '\\n=== PROCESS NOT PERMITTED: Type {icmp_type} ({name}) ==='"
         StepRunner([CommandStep("tester", header_cmd)]).run(context)
 
-        # 1. Traceroute to auxiliary machine BEFORE sending forbidden type
-        print(f"[*] Traceroute to auxiliary machine BEFORE sending Type {icmp_type}")
-        StepRunner([CommandStep("tester", f"echo '--- BEFORE Type {icmp_type} ---'")]).run(context)
-        StepRunner([CommandStep("tester", traceroute_cmd)]).run(context)
-        time.sleep(8)  # wait for traceroute to complete
-        route_before = context.terminal_manager.capture_output("tester")
-        StepRunner([ScreenshotStep(
-            terminal="tester",
-            suffix=f"process_before_ipv{ip_version}_type_{icmp_type}"
-        )]).run(context)
-
-        # 2. Send the forbidden ICMP type to DuT
-        print(f"[*] Sending Type {icmp_type} ({name}) to DuT (OpenWRT)...")
-        StepRunner([CommandStep("tester", f"echo '{sudo_pass}' | sudo -S true")]).run(context)
-        time.sleep(1)
-
-        if ip_version == 4 and icmp_type == 5:
-            # ICMP Redirect: tell DuT to use a different gateway for auxiliary machine
-            send_cmd = (
-                f"sudo python3 -c \""
-                f"from scapy.all import *; "
-                f"send(IP(src='{dut_ip}', dst='{openwrt_ip}')"
-                f"/ICMP(type=5, code=1, gw='10.0.0.1')"
-                f"/IP(dst='{aux_ip}'))\""
-            )
-        elif ip_version == 6 and icmp_type == 137:
-            openwrt_ipv6 = context.openwrt_ipv6 or openwrt_ip
-            send_cmd = (
-                f"sudo python3 -c \""
-                f"from scapy.all import *; "
-                f"send(IPv6(dst='{openwrt_ipv6}')"
-                f"/ICMPv6ND_Redirect(tgt='fd00::1', dst='{aux_ip}'))\""
-            )
-        elif icmp_type == 133:
-            openwrt_ipv6 = context.openwrt_ipv6 or openwrt_ip
-            send_cmd = (
-                f"sudo python3 -c \""
-                f"from scapy.all import *; "
-                f"send(IPv6(dst='{openwrt_ipv6}')/ICMPv6ND_RS())\""
-            )
-        elif icmp_type == 134:
-            openwrt_ipv6 = context.openwrt_ipv6 or openwrt_ip
-            send_cmd = (
-                f"sudo python3 -c \""
-                f"from scapy.all import *; "
-                f"send(IPv6(dst='{openwrt_ipv6}')/ICMPv6ND_RA())\""
-            )
+        # Redirect types: use real network flow
+        if (ip_version == 4 and icmp_type == 5) or (ip_version == 6 and icmp_type == 137):
+            status = _test_redirect_real(
+                context, ip_version, icmp_type, name, aux_ip, openwrt_ip, sudo_pass)
         else:
-            continue
+            # RS/RA: use crafted packet + traceroute comparison
+            status = _test_process_crafted(
+                context, ip_version, icmp_type, name, aux_ip, openwrt_ip, sudo_pass)
 
-        StepRunner([CommandStep("tester", send_cmd)]).run(context)
-        time.sleep(3)
-
-        # 3. Traceroute to auxiliary machine AFTER sending forbidden type
-        print(f"[*] Traceroute to auxiliary machine AFTER sending Type {icmp_type}")
-        StepRunner([CommandStep("tester", "clear")]).run(context)
-        StepRunner([CommandStep("tester", f"echo '--- AFTER Type {icmp_type} ---'")]).run(context)
-        StepRunner([CommandStep("tester", traceroute_cmd)]).run(context)
-        time.sleep(8)  # wait for traceroute to complete
-        route_after = context.terminal_manager.capture_output("tester")
-        StepRunner([ScreenshotStep(
-            terminal="tester",
-            suffix=f"process_after_ipv{ip_version}_type_{icmp_type}"
-        )]).run(context)
-
-        # 4. Compare traceroute paths — must be identical
-        if route_before.strip() == route_after.strip():
-            print(f"[PASS] DuT config UNCHANGED after Type {icmp_type} ({name})")
-            context.current_testcase.sub_results.append({
-                "test_type": "Process",
-                "icmp_type": icmp_type,
-                "icmp_name": name,
-                "ip_version": ip_version,
-                "status": "PASS",
-                "category": "Not Permitted",
-            })
-        else:
-            print(f"[FAIL] VIOLATION: DuT config CHANGED after Type {icmp_type} ({name})!")
+        if status == "FAIL":
             violations.append(icmp_type)
-            context.current_testcase.sub_results.append({
-                "test_type": "Process",
-                "icmp_type": icmp_type,
-                "icmp_name": name,
-                "ip_version": ip_version,
-                "status": "FAIL",
-                "category": "Not Permitted",
-            })
+
+        context.current_testcase.sub_results.append({
+            "test_type": "Process",
+            "icmp_type": icmp_type,
+            "icmp_name": name,
+            "ip_version": ip_version,
+            "status": status,
+            "category": "Not Permitted",
+        })
 
     return violations
 

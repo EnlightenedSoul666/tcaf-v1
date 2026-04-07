@@ -12,6 +12,7 @@ class RuntimeContext:
                  snmp_user=None, snmp_auth_pass=None, snmp_priv_pass=None,
                  sudo_password=None, openwrt_ip=None, openwrt_ipv6=None, openwrt_password=None,
                  metasploitable_ip=None, metasploitable_ipv6=None,
+                 metasploitable_user=None, metasploitable_password=None,
                  nonsense_ip=None, nonsense_ipv6=None):
 
         self.execution_id = str(uuid.uuid4())
@@ -38,6 +39,8 @@ class RuntimeContext:
         # ICMP-specific: Metasploitable and nonsense IPs
         self.metasploitable_ip = metasploitable_ip
         self.metasploitable_ipv6 = metasploitable_ipv6
+        self.metasploitable_user = metasploitable_user
+        self.metasploitable_password = metasploitable_password
         self.nonsense_ip = nonsense_ip
         self.nonsense_ipv6 = nonsense_ipv6
 

@@ -1,6 +1,39 @@
+import subprocess
 from core.clause import BaseClause
 from clauses.clause_1_10_1.tc1_icmp import TC1ICMPIPv4
 from clauses.clause_1_10_1.tc2_icmp import TC2ICMPIPv6
+
+
+def _discover_ipv6_via_ssh(host, username, password):
+    """SSH into a machine and return its first global-scope ULA IPv6 address."""
+    cmd = (
+        f"sshpass -p '{password}' ssh -o StrictHostKeyChecking=no "
+        f"-o ConnectTimeout=5 "
+        f"-o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa "
+        f"{username}@{host} 'ip -6 addr show scope global 2>/dev/null; ifconfig 2>/dev/null'"
+    )
+    try:
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=15)
+        addresses = []
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            # Modern 'ip' format: "inet6 fdd4:48ab:15e6::1/60 scope global ..."
+            if line.startswith("inet6 ") and "scope global" in line.lower():
+                addr = line.split()[1].split("/")[0]
+                addresses.append(addr)
+            # Old ifconfig format: "inet6 addr: fdd4:.../64 Scope:Global"
+            elif "inet6 addr:" in line and "scope:global" in line.lower():
+                part = line.split("inet6 addr:")[1].strip().split("/")[0].strip()
+                addresses.append(part)
+
+        # Prefer ULA addresses (fd/fc prefix) — matches typical lab networks
+        for addr in addresses:
+            if addr.startswith("fd") or addr.startswith("fc"):
+                return addr
+        return addresses[0] if addresses else None
+    except Exception as e:
+        print(f"    [!] SSH to {host} failed: {e}")
+        return None
 
 
 class Clause_1_10_1(BaseClause):
@@ -18,17 +51,46 @@ class Clause_1_10_1(BaseClause):
 
     def prepare_context(self):
         """
-        Map the auxiliary machine IPs (Metasploitable) onto the generic
-        auxiliary_ip / auxiliary_ipv6 attributes that icmp_helpers expects.
-        Also strip IPv6 prefix lengths (/64, /60 etc.) from all IPv6
-        addresses — Scapy cannot resolve MAC addresses when the prefix
-        length is appended to the destination.
+        1. Map auxiliary machine IPs (Metasploitable) onto generic attributes
+        2. Auto-discover IPv6 addresses via SSH
+        3. Strip any IPv6 prefix lengths
         """
         self.context.auxiliary_ip = getattr(self.context, "metasploitable_ip", None)
-        self.context.auxiliary_ipv6 = getattr(self.context, "metasploitable_ipv6", None)
 
-        # Strip prefix lengths from all IPv6 addresses used in this clause
+        # ── Auto-discover IPv6 addresses ─────────────────────────────────
+        print("\n[*] Auto-discovering IPv6 addresses via SSH...")
+
+        # OpenWRT
+        if self.context.openwrt_ip and self.context.openwrt_password:
+            ipv6 = _discover_ipv6_via_ssh(
+                self.context.openwrt_ip, "root", self.context.openwrt_password)
+            if ipv6:
+                self.context.openwrt_ipv6 = ipv6
+                print(f"    OpenWRT ({self.context.openwrt_ip}):        {ipv6}")
+            else:
+                print(f"    OpenWRT ({self.context.openwrt_ip}):        [not found]")
+
+        # Metasploitable (auxiliary machine)
+        meta_ip = getattr(self.context, "metasploitable_ip", None)
+        meta_user = getattr(self.context, "metasploitable_user", None)
+        meta_pass = getattr(self.context, "metasploitable_password", None)
+        if meta_ip and meta_user and meta_pass:
+            ipv6 = _discover_ipv6_via_ssh(meta_ip, meta_user, meta_pass)
+            if ipv6:
+                self.context.dut_ipv6 = ipv6
+                self.context.auxiliary_ipv6 = ipv6
+                print(f"    Metasploitable ({meta_ip}):  {ipv6}")
+            else:
+                print(f"    Metasploitable ({meta_ip}):  [not found]")
+
+        # If auxiliary_ipv6 wasn't auto-discovered, fall back to manual value
+        if not getattr(self.context, "auxiliary_ipv6", None):
+            self.context.auxiliary_ipv6 = getattr(self.context, "metasploitable_ipv6", None)
+
+        # ── Strip prefix lengths from all IPv6 addresses ─────────────────
         for attr in ("dut_ipv6", "openwrt_ipv6", "auxiliary_ipv6", "nonsense_ipv6"):
             val = getattr(self.context, attr, None)
             if val and "/" in val:
                 setattr(self.context, attr, val.split("/")[0])
+
+        print("[*] Context ready.\n")

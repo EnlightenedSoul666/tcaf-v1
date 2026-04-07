@@ -21,21 +21,18 @@ def run(
 
     # Look up what this clause needs from its class declaration
     clause_class = CLAUSE_REGISTRY.get(clause)
+    has_auxiliary = clause_class and getattr(clause_class, "REQUIRES_AUXILIARY", False)
 
     # Always ask for DuT IP (needed by all clauses)
-    # For clauses with REQUIRES_AUXILIARY (e.g. 1.10.1), the DuT is OpenWRT
-    # and this IP is the Metasploitable/auxiliary target for Respond tests
-    if clause_class and getattr(clause_class, "REQUIRES_AUXILIARY", False):
+    if has_auxiliary:
         dut_ip = input("Enter DuT (Metasploitable) IP address: ")
     else:
         dut_ip = input("Enter DuT IP address: ")
 
+    # IPv6: skip manual prompt for auxiliary clauses (auto-discovered via SSH)
     dut_ipv6 = None
-    if clause_class and clause_class.REQUIRES_IPV6:
-        if getattr(clause_class, "REQUIRES_AUXILIARY", False):
-            dut_ipv6 = input("Enter DuT (Metasploitable) IPv6 address: ")
-        else:
-            dut_ipv6 = input("Enter DuT IPv6 address: ")
+    if clause_class and clause_class.REQUIRES_IPV6 and not has_auxiliary:
+        dut_ipv6 = input("Enter DuT IPv6 address: ")
 
     ssh_user = None
     ssh_password = None
@@ -52,19 +49,24 @@ def run(
     openwrt_password = None
     if clause_class and clause_class.REQUIRES_OPENWRT:
         openwrt_ip = input("Enter OpenWRT (DuT router) IP address: ")
-        openwrt_ipv6 = input("Enter OpenWRT (DuT router) IPv6 address: ")
+        # Skip IPv6 for auxiliary clauses (auto-discovered via SSH)
+        if not has_auxiliary:
+            openwrt_ipv6 = input("Enter OpenWRT (DuT router) IPv6 address: ")
         openwrt_password = getpass.getpass("Enter OpenWRT root password: ")
 
-    # Auxiliary machine IPs (e.g. Metasploitable for ICMP Process tests)
+    # Auxiliary machine (e.g. Metasploitable for ICMP Redirect tests)
     metasploitable_ip = None
-    metasploitable_ipv6 = None
+    metasploitable_user = None
+    metasploitable_password = None
     nonsense_ip = None
     nonsense_ipv6 = None
-    if clause_class and getattr(clause_class, "REQUIRES_AUXILIARY", False):
+    if has_auxiliary:
         metasploitable_ip   = input("Enter auxiliary machine (Metasploitable) IPv4 address: ")
-        metasploitable_ipv6 = input("Enter auxiliary machine (Metasploitable) IPv6 address (or press Enter to skip): ") or None
-        nonsense_ip   = input("Enter nonsense IPv4 address (unreachable, no service running): ")
-        nonsense_ipv6 = input("Enter nonsense IPv6 address (unreachable, no service running): ")
+        metasploitable_user = input("Enter Metasploitable SSH username: ")
+        metasploitable_password = getpass.getpass("Enter Metasploitable SSH password: ")
+        nonsense_ip   = input("Enter nonsense IPv4 address (unreachable): ")
+        nonsense_ipv6 = input("Enter nonsense IPv6 address (unreachable): ")
+        print("  (IPv6 addresses will be auto-discovered via SSH)")
 
     engine = Engine(
         clause=clause,
@@ -78,7 +80,8 @@ def run(
         openwrt_ipv6=openwrt_ipv6,
         openwrt_password=openwrt_password,
         metasploitable_ip=metasploitable_ip,
-        metasploitable_ipv6=metasploitable_ipv6,
+        metasploitable_user=metasploitable_user,
+        metasploitable_password=metasploitable_password,
         nonsense_ip=nonsense_ip,
         nonsense_ipv6=nonsense_ipv6,
     )

@@ -246,7 +246,7 @@ class PDFClause1101Report(PDFReportBase):
         story += sub_heading("3.2 Network Topology", styles)
         story += body(
             "The test uses a three-device topology: Tester (Kali/Ubuntu), DUT (OpenWRT router), "
-            "and a third host (Metasploitable) for redirect/routing tests. All devices are on "
+            "and a third host (auxiliary machine) for redirect/routing tests. All devices are on "
             "the same bridged network segment.", styles)
 
         # ── 4. Preconditions ──────────────────────────────────────────────
@@ -312,7 +312,7 @@ class PDFClause1101Report(PDFReportBase):
         story += sub_sub_heading("Routing Setup for ICMP Tests", styles)
         story += body(
             "To test Send and Process categories, the tester adds static routes so that "
-            "packets destined for the Metasploitable host and the nonsense IP travel through "
+            "packets destined for the auxiliary machine and the nonsense IP travel through "
             "the OpenWRT router instead of directly to the target. This forces OpenWRT to "
             "generate ICMP errors (Destination Unreachable, Time Exceeded, Redirect) that "
             "would not occur on a flat L2 segment. Traceroutes are captured before and after "

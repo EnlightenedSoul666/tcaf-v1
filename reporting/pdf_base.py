@@ -293,7 +293,7 @@ def describe_screenshot(filename):
         v = "IPv6" if "ipv6" in suffix else "IPv4"
         return (f"Routing table output (ip route show) confirming the static routes "
                 f"via OpenWRT have been added ({v}). The new entries for the nonsense IP and "
-                "Metasploitable target are visible in the table.")
+                "auxiliary machine target are visible in the table.")
 
     # ── ICMP Respond-to tests ──
     if "respond_notpermitted" in suffix:
@@ -341,17 +341,17 @@ def describe_screenshot(filename):
     if "process_before" in suffix:
         icmp_type = _extract_type(suffix)
         v, tname = _ip_label(suffix, icmp_type)
-        return (f"Process Not Permitted — BEFORE test ({v}): routing table snapshot "
-                f"captured before sending ICMP Type {icmp_type} ({tname}) to the DuT. "
-                "This establishes the baseline routing state. The DuT must not alter its "
-                "configuration in response to this ICMP type.")
+        return (f"Process Not Permitted — BEFORE test ({v}): traceroute to the auxiliary "
+                f"machine captured before sending ICMP Type {icmp_type} ({tname}) to the DuT. "
+                "This establishes the baseline network path. The DuT must not alter its "
+                "routing configuration in response to this ICMP type.")
     if "process_after" in suffix:
         icmp_type = _extract_type(suffix)
         v, tname = _ip_label(suffix, icmp_type)
-        return (f"Process Not Permitted — AFTER test ({v}): routing table snapshot "
-                f"captured after sending ICMP Type {icmp_type} ({tname}) to the DuT. "
-                "Comparing with the BEFORE snapshot confirms the DuT did NOT process "
-                "or act upon this ICMP message, maintaining compliance.")
+        return (f"Process Not Permitted — AFTER test ({v}): traceroute to the auxiliary "
+                f"machine captured after sending ICMP Type {icmp_type} ({tname}) to the DuT. "
+                "Comparing with the BEFORE traceroute confirms the DuT did NOT process "
+                "or act upon this ICMP message — the path remains unchanged.")
 
     # ── Port scan evidence ──
     if "tcp_scan_results" in suffix:

@@ -160,7 +160,7 @@ class Clause1101Report(BaseReport):
         self.add_bold_paragraph(doc, "Routing Setup for ICMP Tests")
         doc.add_paragraph(
             "To test Send and Process categories, the tester adds static routes so that "
-            "packets destined for the Metasploitable host and the nonsense IP travel through "
+            "packets destined for the auxiliary machine and the nonsense IP travel through "
             "the OpenWRT router instead of directly to the target. This forces OpenWRT to "
             "generate ICMP errors (Destination Unreachable, Time Exceeded, Redirect) that "
             "would not occur on a flat L2 segment. Traceroutes are captured before and after "

@@ -16,7 +16,7 @@ import time
 
 # ===========================================================================
 #  ROUTING SETUP / TEARDOWN
-#  Route packets destined for Metasploitable and the nonsense IP
+#  Route packets destined for auxiliary machine and the nonsense IP
 #  through the OpenWRT router, so OpenWRT can generate ICMP errors
 #  (Dest Unreachable, Time Exceeded, Redirect, etc.)
 # ===========================================================================
@@ -52,7 +52,7 @@ def setup_routing(context, ip_version):
     """
     Configure the tester (Kali) routing table so that:
       - Packets to the nonsense IP go via OpenWRT  (for Dest Unreachable)
-      - Packets to Metasploitable go via OpenWRT   (for Redirect tests)
+      - Packets to auxiliary machine go via OpenWRT  (for Redirect tests)
 
     Runs traceroute BEFORE and AFTER adding routes as evidence.
     This must run BEFORE the Send and Process tests.
@@ -67,9 +67,9 @@ def setup_routing(context, ip_version):
 
     # ── BEFORE: traceroute to document the current (default) path ────────────
     if ip_version == 4:
-        targets_before = [t for t in [context.nonsense_ip, context.metasploitable_ip] if t]
+        targets_before = [t for t in [context.nonsense_ip, context.auxiliary_ip] if t]
     else:
-        targets_before = [t for t in [context.nonsense_ipv6, context.metasploitable_ipv6] if t]
+        targets_before = [t for t in [context.nonsense_ipv6, context.auxiliary_ipv6] if t]
 
     if targets_before:
         print(f"[*] Running traceroute BEFORE route setup (IPv{ip_version})")
@@ -88,7 +88,7 @@ def setup_routing(context, ip_version):
             StepRunner([CommandStep("tester", cmd)]).run(context)
             time.sleep(1)
 
-        meta_ip = context.metasploitable_ip
+        meta_ip = context.auxiliary_ip
         if meta_ip:
             cmd = f"sudo ip route add {meta_ip}/32 via {openwrt_ip}"
             print(f"[*] Adding route: {meta_ip} via {openwrt_ip}")
@@ -107,7 +107,7 @@ def setup_routing(context, ip_version):
             StepRunner([CommandStep("tester", cmd)]).run(context)
             time.sleep(1)
 
-        meta_ipv6 = context.metasploitable_ipv6
+        meta_ipv6 = context.auxiliary_ipv6
         if meta_ipv6:
             cmd = f"sudo ip -6 route add {meta_ipv6}/128 via {openwrt_ipv6}"
             print(f"[*] Adding IPv6 route: {meta_ipv6} via {openwrt_ipv6}")
@@ -153,7 +153,7 @@ def teardown_routing(context, ip_version):
             cmd = f"sudo ip route del {nonsense_ip}/32 via {openwrt_ip} 2>/dev/null"
             StepRunner([CommandStep("tester", cmd)]).run(context)
 
-        meta_ip = context.metasploitable_ip
+        meta_ip = context.auxiliary_ip
         if meta_ip:
             cmd = f"sudo ip route del {meta_ip}/32 via {openwrt_ip} 2>/dev/null"
             StepRunner([CommandStep("tester", cmd)]).run(context)
@@ -166,7 +166,7 @@ def teardown_routing(context, ip_version):
             cmd = f"sudo ip -6 route del {nonsense_ipv6}/128 via {openwrt_ipv6} 2>/dev/null"
             StepRunner([CommandStep("tester", cmd)]).run(context)
 
-        meta_ipv6 = context.metasploitable_ipv6
+        meta_ipv6 = context.auxiliary_ipv6
         if meta_ipv6:
             cmd = f"sudo ip -6 route del {meta_ipv6}/128 via {openwrt_ipv6} 2>/dev/null"
             StepRunner([CommandStep("tester", cmd)]).run(context)
@@ -748,8 +748,10 @@ def check_not_permitted_process(context, ip_version, dut_ip):
     Verify DuT does NOT process (change configuration) for ICMP types
     where Process = Not Permitted per ETSI.
 
-    Method: SSH into DuT, capture routing table BEFORE, send forbidden
-    ICMP type, capture routing table AFTER, compare.
+    Method: Run traceroute to auxiliary machine BEFORE, send forbidden
+    ICMP type to DuT, run traceroute AFTER, compare paths.
+    If the DuT processed the forbidden type (e.g. Redirect), the
+    traceroute path would change — which must NOT happen.
     """
     violations = []
     openwrt_ip = context.openwrt_ip
@@ -757,25 +759,33 @@ def check_not_permitted_process(context, ip_version, dut_ip):
     sudo_pass = context.sudo_password or ""
 
     if not openwrt_ip or not openwrt_pass:
-        print("[-] OpenWRT credentials not provided. Skipping Process tests.")
+        print("[-] DuT (OpenWRT) credentials not provided. Skipping Process tests.")
         return violations
 
+    # Determine the traceroute target (auxiliary machine)
     if ip_version == 4:
         process_types = get_process_not_permitted_ipv4()
-        route_cmd = f"sshpass -p '{openwrt_pass}' ssh -o StrictHostKeyChecking=no root@{openwrt_ip} 'ip route show'"
+        aux_ip = context.auxiliary_ip
+        traceroute_cmd = f"traceroute -n -m 5 -w 2 {aux_ip}" if aux_ip else None
     else:
         process_types = get_process_not_permitted_ipv6()
-        route_cmd = f"sshpass -p '{openwrt_pass}' ssh -o StrictHostKeyChecking=no root@{openwrt_ip} 'ip -6 route show'"
+        aux_ip = context.auxiliary_ipv6
+        traceroute_cmd = f"traceroute6 -n -m 5 -w 2 {aux_ip}" if aux_ip else None
+
+    if not traceroute_cmd:
+        print(f"[-] No auxiliary machine IPv{ip_version} address. Skipping Process tests.")
+        return violations
 
     for icmp_type, name in process_types.items():
         StepRunner([CommandStep("tester", "clear")]).run(context)
         header_cmd = f"echo -e '\\n=== PROCESS NOT PERMITTED: Type {icmp_type} ({name}) ==='"
         StepRunner([CommandStep("tester", header_cmd)]).run(context)
 
-        # 1. Capture routing config BEFORE
-        print(f"[*] Capturing DuT routing config BEFORE sending Type {icmp_type}")
-        StepRunner([CommandStep("tester", route_cmd)]).run(context)
-        time.sleep(2)
+        # 1. Traceroute to auxiliary machine BEFORE sending forbidden type
+        print(f"[*] Traceroute to auxiliary machine BEFORE sending Type {icmp_type}")
+        StepRunner([CommandStep("tester", f"echo '--- BEFORE Type {icmp_type} ---'")]).run(context)
+        StepRunner([CommandStep("tester", traceroute_cmd)]).run(context)
+        time.sleep(8)  # wait for traceroute to complete
         route_before = context.terminal_manager.capture_output("tester")
         StepRunner([ScreenshotStep(
             terminal="tester",
@@ -783,18 +793,18 @@ def check_not_permitted_process(context, ip_version, dut_ip):
         )]).run(context)
 
         # 2. Send the forbidden ICMP type to DuT
-        print(f"[*] Sending Type {icmp_type} ({name}) to DuT...")
+        print(f"[*] Sending Type {icmp_type} ({name}) to DuT (OpenWRT)...")
         StepRunner([CommandStep("tester", f"echo '{sudo_pass}' | sudo -S true")]).run(context)
         time.sleep(1)
 
         if ip_version == 4 and icmp_type == 5:
-            # ICMP Redirect: tell router to use a different gateway
+            # ICMP Redirect: tell DuT to use a different gateway for auxiliary machine
             send_cmd = (
                 f"sudo python3 -c \""
                 f"from scapy.all import *; "
                 f"send(IP(src='{dut_ip}', dst='{openwrt_ip}')"
                 f"/ICMP(type=5, code=1, gw='10.0.0.1')"
-                f"/IP(dst='192.168.1.0'))\""
+                f"/IP(dst='{aux_ip}'))\""
             )
         elif ip_version == 6 and icmp_type == 137:
             openwrt_ipv6 = context.openwrt_ipv6 or openwrt_ip
@@ -802,7 +812,7 @@ def check_not_permitted_process(context, ip_version, dut_ip):
                 f"sudo python3 -c \""
                 f"from scapy.all import *; "
                 f"send(IPv6(dst='{openwrt_ipv6}')"
-                f"/ICMPv6ND_Redirect(tgt='fd00::1', dst='fd00::2'))\""
+                f"/ICMPv6ND_Redirect(tgt='fd00::1', dst='{aux_ip}'))\""
             )
         elif icmp_type == 133:
             openwrt_ipv6 = context.openwrt_ipv6 or openwrt_ip
@@ -824,18 +834,19 @@ def check_not_permitted_process(context, ip_version, dut_ip):
         StepRunner([CommandStep("tester", send_cmd)]).run(context)
         time.sleep(3)
 
-        # 3. Capture routing config AFTER
-        print(f"[*] Capturing DuT routing config AFTER sending Type {icmp_type}")
+        # 3. Traceroute to auxiliary machine AFTER sending forbidden type
+        print(f"[*] Traceroute to auxiliary machine AFTER sending Type {icmp_type}")
         StepRunner([CommandStep("tester", "clear")]).run(context)
-        StepRunner([CommandStep("tester", route_cmd)]).run(context)
-        time.sleep(2)
+        StepRunner([CommandStep("tester", f"echo '--- AFTER Type {icmp_type} ---'")]).run(context)
+        StepRunner([CommandStep("tester", traceroute_cmd)]).run(context)
+        time.sleep(8)  # wait for traceroute to complete
         route_after = context.terminal_manager.capture_output("tester")
         StepRunner([ScreenshotStep(
             terminal="tester",
             suffix=f"process_after_ipv{ip_version}_type_{icmp_type}"
         )]).run(context)
 
-        # 4. Compare routing tables
+        # 4. Compare traceroute paths — must be identical
         if route_before.strip() == route_after.strip():
             print(f"[PASS] DuT config UNCHANGED after Type {icmp_type} ({name})")
             context.current_testcase.sub_results.append({

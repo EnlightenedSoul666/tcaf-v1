@@ -47,14 +47,14 @@ def run(
         openwrt_ipv6 = input("Enter OpenWRT IPv6 address: ")
         openwrt_password = getpass.getpass("Enter OpenWRT root password: ")
 
-    # ICMP-specific: Metasploitable IP + nonsense IP for Send/Process tests
+    # Auxiliary machine IPs (e.g. Metasploitable for ICMP Process tests)
     metasploitable_ip = None
     metasploitable_ipv6 = None
     nonsense_ip = None
     nonsense_ipv6 = None
-    if clause_class and getattr(clause_class, "REQUIRES_METASPLOITABLE", False):
-        metasploitable_ip   = input("Enter Metasploitable IPv4 address: ")
-        metasploitable_ipv6 = input("Enter Metasploitable IPv6 address (or press Enter to skip): ") or None
+    if clause_class and getattr(clause_class, "REQUIRES_AUXILIARY", False):
+        metasploitable_ip   = input("Enter auxiliary machine (Metasploitable) IPv4 address: ")
+        metasploitable_ipv6 = input("Enter auxiliary machine (Metasploitable) IPv6 address (or press Enter to skip): ") or None
         nonsense_ip   = input("Enter nonsense IPv4 address (unreachable, no service running): ")
         nonsense_ipv6 = input("Enter nonsense IPv6 address (unreachable, no service running): ")
 

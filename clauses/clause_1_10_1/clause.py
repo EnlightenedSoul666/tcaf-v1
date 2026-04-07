@@ -15,3 +15,11 @@ class Clause_1_10_1(BaseClause):
         super().__init__(context)
         self.add_testcase(TC1ICMPIPv4())
         self.add_testcase(TC2ICMPIPv6())
+
+    def prepare_context(self):
+        """
+        Map the auxiliary machine IPs (Metasploitable) onto the generic
+        auxiliary_ip / auxiliary_ipv6 attributes that icmp_helpers expects.
+        """
+        self.context.auxiliary_ip = getattr(self.context, "metasploitable_ip", None)
+        self.context.auxiliary_ipv6 = getattr(self.context, "metasploitable_ipv6", None)

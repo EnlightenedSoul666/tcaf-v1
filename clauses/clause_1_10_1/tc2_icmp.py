@@ -4,6 +4,7 @@ from clauses.clause_1_10_1.icmp_helpers import (
     run_send_capture_cycle, run_send_screenshot_loop,
     check_not_permitted_send, check_not_permitted_respond,
     check_not_permitted_process,
+    setup_routing, teardown_routing,
     get_respond_mapping_ipv6,
 )
 from datetime import datetime
@@ -59,6 +60,13 @@ class TC2ICMPIPv6(TestCase):
         respond_status = validate_pcap(context, respond_pcap)
 
         # ===================================================================
+        # ROUTING SETUP
+        # Route traffic to auxiliary machine (Metasploitable) and nonsense IP
+        # through OpenWRT so it can generate ICMPv6 errors and Redirects
+        # ===================================================================
+        setup_routing(context, ip_version=6)
+
+        # ===================================================================
         # PART 2: SEND TESTS
         # Per ETSI: Trigger DuT to generate ICMPv6, verify correct types sent
         # ===================================================================
@@ -67,6 +75,7 @@ class TC2ICMPIPv6(TestCase):
         openwrt_ip = context.openwrt_ip
         if not openwrt_ip:
             print("[-] No OpenWRT IP provided. Skipping Send tests.")
+            teardown_routing(context, ip_version=6)
             self.status = respond_status if not all_violations else "FAIL"
             return self
 
@@ -104,6 +113,11 @@ class TC2ICMPIPv6(TestCase):
         process_violations = check_not_permitted_process(
             context, ip_version=6, dut_ip=ipv6_target)
         all_violations.extend(process_violations)
+
+        # ===================================================================
+        # ROUTING TEARDOWN — remove routes added during setup
+        # ===================================================================
+        teardown_routing(context, ip_version=6)
 
         # ===================================================================
         # FINAL STATUS

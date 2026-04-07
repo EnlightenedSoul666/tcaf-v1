@@ -19,15 +19,23 @@ def run(
 
     logger.info("ICAF CLI started")
 
-    # Always ask for DuT IP (needed by all clauses)
-    dut_ip = input("Enter DuT IP address: ")
-
     # Look up what this clause needs from its class declaration
     clause_class = CLAUSE_REGISTRY.get(clause)
 
+    # Always ask for DuT IP (needed by all clauses)
+    # For clauses with REQUIRES_AUXILIARY (e.g. 1.10.1), the DuT is OpenWRT
+    # and this IP is the Metasploitable/auxiliary target for Respond tests
+    if clause_class and getattr(clause_class, "REQUIRES_AUXILIARY", False):
+        dut_ip = input("Enter DuT (Metasploitable) IP address: ")
+    else:
+        dut_ip = input("Enter DuT IP address: ")
+
     dut_ipv6 = None
     if clause_class and clause_class.REQUIRES_IPV6:
-        dut_ipv6 = input("Enter DuT IPv6 address: ")
+        if getattr(clause_class, "REQUIRES_AUXILIARY", False):
+            dut_ipv6 = input("Enter DuT (Metasploitable) IPv6 address: ")
+        else:
+            dut_ipv6 = input("Enter DuT IPv6 address: ")
 
     ssh_user = None
     ssh_password = None
@@ -43,8 +51,8 @@ def run(
     openwrt_ipv6 = None
     openwrt_password = None
     if clause_class and clause_class.REQUIRES_OPENWRT:
-        openwrt_ip = input("Enter OpenWRT IP address: ")
-        openwrt_ipv6 = input("Enter OpenWRT IPv6 address: ")
+        openwrt_ip = input("Enter OpenWRT (DuT router) IP address: ")
+        openwrt_ipv6 = input("Enter OpenWRT (DuT router) IPv6 address: ")
         openwrt_password = getpass.getpass("Enter OpenWRT root password: ")
 
     # Auxiliary machine IPs (e.g. Metasploitable for ICMP Process tests)

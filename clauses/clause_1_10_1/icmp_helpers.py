@@ -748,14 +748,32 @@ def _test_redirect_real(context, ip_version, icmp_type, name, aux_ip, openwrt_ip
     time.sleep(1)
 
     # -- 9. Determine result -----------------------------------------------
+    # ETSI TS 133 117 compliance: the DuT/system MUST NOT change its routing
+    # configuration based on received ICMP Redirects. We judge compliance by
+    # comparing the traceroute BEFORE vs AFTER the Redirect was delivered.
+    #
+    #   route unchanged  -> Redirect was ignored     -> PASS (compliant)
+    #   route changed    -> Redirect was accepted    -> FAIL (violation)
+    #
+    # Whether a Redirect packet was observed in the PCAP is recorded as
+    # supporting evidence, but it is not the pass/fail criterion.
     route_changed = route_before.strip() != route_after.strip()
 
-    if redirect_found:
-        print(f"[PASS] OpenWRT correctly sent Redirect (Type {icmp_type})")
-        status = "PASS"
-    else:
-        print(f"[FAIL] OpenWRT did NOT send Redirect (Type {icmp_type})")
+    if route_changed:
+        print(f"[FAIL] Traceroute path CHANGED after Redirect (Type {icmp_type}) "
+              f"-- DuT/system accepted the Redirect, violating ETSI TS 133 117")
         status = "FAIL"
+    else:
+        print(f"[PASS] Traceroute path UNCHANGED after Redirect (Type {icmp_type}) "
+              f"-- DuT/system ignored the Redirect as required by ETSI TS 133 117")
+        status = "PASS"
+
+    if redirect_found:
+        print(f"       (ICMP Redirect from OpenWRT was observed in the PCAP -- "
+              f"confirms the stimulus reached the tester)")
+    else:
+        print(f"       (No ICMP Redirect observed in the PCAP -- OpenWRT did not "
+              f"emit one for this traffic pattern)")
 
     return status
 
@@ -894,31 +912,67 @@ def check_not_permitted_process(context, ip_version, dut_ip):
         openwrt_label = context.openwrt_ipv6 or openwrt_ip
         if (ip_version == 4 and icmp_type == 5) or (ip_version == 6 and icmp_type == 137):
             proc_desc = (
-                f"Process Test - ICMP Redirect (Type {icmp_type}): Traffic to the "
-                f"auxiliary machine at {aux_ip} is forced through the DuT (OpenWRT at "
-                f"{openwrt_ip}). When the router receives a packet whose best next-hop "
-                f"is on the same interface, it sends an ICMP Redirect advising the "
-                f"sender to communicate directly. The BEFORE traceroute shows packets "
-                f"traversing OpenWRT. After pinging {aux_ip}, the PCAP is checked for "
-                f"the Redirect packet. The AFTER traceroute documents whether the "
-                f"redirect was received. Per ETSI TS 133 117, the DuT MUST NOT change "
-                f"its own routing configuration based on received Redirects."
+                f"Process Test - ICMP Redirect (Type {icmp_type}): An ICMP Redirect "
+                f"is a message a router sends to a host saying 'there is a better "
+                f"first hop for this destination, please use it directly next time'. "
+                f"If honoured, the receiving system installs a host-route in its "
+                f"routing cache and subsequent packets bypass the original gateway. "
+                f"To exercise this, traffic to the auxiliary machine at {aux_ip} is "
+                f"first forced through the DuT (OpenWRT at {openwrt_ip}) using an "
+                f"'ip route replace ... via <openwrt>' command. The BEFORE traceroute "
+                f"confirms that packets are crossing OpenWRT. We then ping {aux_ip}: "
+                f"OpenWRT notices the destination is reachable on the same interface "
+                f"the packet arrived on and emits an ICMP Redirect. The AFTER "
+                f"traceroute is the compliance evidence -- if the path to {aux_ip} "
+                f"still traverses OpenWRT, the Redirect was ignored (PASS). If the "
+                f"path has collapsed to a direct hop, the Redirect was accepted and "
+                f"the system is non-compliant (FAIL). Per ETSI TS 133 117 clause "
+                f"1.10.1, the DuT MUST NOT alter its routing table based on received "
+                f"ICMP Redirects. The captured PCAP + Wireshark frame document that "
+                f"the stimulus actually reached the tester."
             )
         elif icmp_type == 133:
             proc_desc = (
-                f"Process Test - Router Solicitation (Type 133): A crafted Router "
-                f"Solicitation is sent to the DuT at {openwrt_label}. Traceroute is "
-                f"run before and after to verify the DuT did not alter its routing "
-                f"configuration. Per ETSI, the DuT MUST NOT process Router "
-                f"Solicitations that would change its routing table."
+                f"Process Test - Router Solicitation (Type 133, ICMPv6): A Router "
+                f"Solicitation (RS) is the message a host sends on boot (to the "
+                f"all-routers multicast address ff02::2) asking any on-link router "
+                f"to immediately respond with a Router Advertisement. RS messages "
+                f"themselves do not carry routes, but they invite routers to "
+                f"advertise prefixes, default gateways, and configuration flags "
+                f"that a receiver might then install. Per RFC 4861 a router should "
+                f"only answer an RS -- it should never treat an RS as a reason to "
+                f"change its OWN tables. For this test a crafted ICMPv6 RS is sent "
+                f"to the DuT at {openwrt_label} with scapy "
+                f"(IPv6(dst=DuT)/ICMPv6ND_RS()). A traceroute6 to {aux_ip} is "
+                f"captured BEFORE the RS and AFTER the RS. The two screenshots are "
+                f"compared byte-for-byte: identical output means the DuT's routing "
+                f"table did not shift in response to the solicitation (PASS). Any "
+                f"change in hop count, next-hop address, or latency would indicate "
+                f"the DuT reconfigured itself on receipt of an RS (FAIL). Per ETSI "
+                f"TS 133 117 clause 1.10.1 the DuT MUST NOT process incoming Router "
+                f"Solicitations in a way that alters its routing configuration."
             )
         elif icmp_type == 134:
             proc_desc = (
-                f"Process Test - Router Advertisement (Type 134): A crafted Router "
-                f"Advertisement is sent to the DuT at {openwrt_label}. Traceroute is "
-                f"run before and after to verify the DuT did not alter its routing "
-                f"configuration. Per ETSI, the DuT MUST NOT process Router "
-                f"Advertisements that would change its routing table."
+                f"Process Test - Router Advertisement (Type 134, ICMPv6): A Router "
+                f"Advertisement (RA) is the message a router sends (periodically or "
+                f"in reply to an RS) carrying on-link prefixes, a default router "
+                f"lifetime, MTU, and 'managed/other config' flags. On a host these "
+                f"are the PRIMARY way a default gateway and IPv6 prefix get "
+                f"installed (SLAAC) -- accepting a rogue RA is the classic "
+                f"'rogue-RA' attack and can silently hijack a whole subnet. A router "
+                f"DuT must therefore drop RAs arriving from non-trusted peers and "
+                f"never rewrite its own tables from them (Linux enforces this with "
+                f"net.ipv6.conf.*.accept_ra=0 on forwarding interfaces). For this "
+                f"test a crafted ICMPv6 RA is sent to the DuT at {openwrt_label} "
+                f"with scapy (IPv6(dst=DuT)/ICMPv6ND_RA()). A traceroute6 to "
+                f"{aux_ip} is captured BEFORE and AFTER the RA. The compliance "
+                f"check is a direct string comparison of the two traceroute outputs: "
+                f"identical = DuT ignored the RA (PASS); different next-hop, hop "
+                f"count or gateway = DuT accepted the RA and reconfigured (FAIL). "
+                f"Per ETSI TS 133 117 clause 1.10.1 the DuT MUST NOT process "
+                f"incoming Router Advertisements in a way that alters its routing "
+                f"configuration."
             )
         else:
             proc_desc = ""

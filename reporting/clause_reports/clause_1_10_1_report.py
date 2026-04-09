@@ -46,6 +46,16 @@ def _redirect_sort_key(path):
     return 5
 
 
+def _process_sort_key(path):
+    """Sort RS/RA process screenshots: before -> after."""
+    name = os.path.basename(path).lower()
+    if "process_before" in name:
+        return 0
+    if "process_after" in name:
+        return 1
+    return 2
+
+
 def _screenshot_label(path):
     """Generate a concise human-readable label for a screenshot."""
     name = os.path.basename(path).lower()
@@ -58,23 +68,31 @@ def _screenshot_label(path):
     if "routing_table" in name:
         return "Routing table (ip route show)"
 
-    # Redirect sub-steps
+    # Redirect sub-steps (chronological: setup -> stimulus -> evidence)
     if "redirect_before" in name:
-        return "Traceroute BEFORE redirect trigger"
+        return "Step 1 — Traceroute BEFORE redirect (path forced through DuT)"
     if "redirect_ping" in name:
-        return "Ping to trigger ICMP Redirect"
+        return "Step 2 — Ping auxiliary to provoke ICMP Redirect from DuT"
     if "redirect_after" in name:
-        return "Traceroute AFTER redirect"
+        return "Step 3 — Traceroute AFTER redirect (compliance evidence)"
     if "redirect_pcap" in name:
-        return "PCAP analysis for Redirect packet"
+        return "Step 4 — tshark shows the Redirect packet in the PCAP"
     if "redirect_packet" in name or ("packet_frame" in name and "redirect" in name):
-        return "Wireshark: Redirect packet detail"
+        return "Step 5 — Wireshark frame detail of the captured Redirect"
 
-    # Process sub-steps
+    # Process sub-steps (RS/RA traceroute comparison)
     if "process_before" in name:
-        return "Traceroute BEFORE sending crafted packet"
+        if "type_133" in name:
+            return "Traceroute BEFORE sending Router Solicitation (baseline path)"
+        if "type_134" in name:
+            return "Traceroute BEFORE sending Router Advertisement (baseline path)"
+        return "Traceroute BEFORE sending crafted packet (baseline path)"
     if "process_after" in name:
-        return "Traceroute AFTER sending crafted packet"
+        if "type_133" in name:
+            return "Traceroute AFTER Router Solicitation (should match baseline)"
+        if "type_134" in name:
+            return "Traceroute AFTER Router Advertisement (should match baseline)"
+        return "Traceroute AFTER sending crafted packet (should match baseline)"
 
     # Send / Not Permitted — terminal tshark
     if name.startswith("tester") or (not name.startswith("packet_frame")):
@@ -187,7 +205,8 @@ def _group_screenshots(screenshots, sub_results, context):
         if icmp_type in (5, 137):
             ss_list = sorted(by_redirect, key=_redirect_sort_key)
         else:
-            ss_list = sorted(by_process_type.get(icmp_type, []))
+            ss_list = sorted(by_process_type.get(icmp_type, []),
+                             key=_process_sort_key)
         if not ss_list:
             continue
         title = f"Process Test: {sr['icmp_name']} (Type {icmp_type}) — NOT PERMITTED"

@@ -60,6 +60,14 @@ class Clause_1_10_1(BaseClause):
         if self.context.openwrt_ip:
             self.context.dut_ip = self.context.openwrt_ip
 
+        # Override the global default (Metasploitable 2) so the DUT Details
+        # table in the report correctly identifies OpenWRT as the DuT.
+        self.context.dut_model    = "OpenWRT Router"
+        self.context.dut_serial   = "N/A"
+        self.context.dut_firmware = getattr(
+            self.context, "openwrt_firmware", "OpenWRT (auto-detected)"
+        )
+
         self.context.auxiliary_ip = getattr(self.context, "metasploitable_ip", None)
 
         # ── Auto-discover IPv6 addresses via SSH ─────────────────────────────

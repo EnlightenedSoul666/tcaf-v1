@@ -14,6 +14,8 @@ import datetime
 
 from reportlab.lib import colors
 from reportlab.platypus import Spacer, PageBreak, Table, TableStyle, Paragraph
+from reportlab.lib.utils import ImageReader
+from reportlab.platypus import Image as RLImage
 
 from reporting.pdf_base import (
     PDFReportBase, W,
@@ -21,10 +23,13 @@ from reporting.pdf_base import (
     body, bullet, output_block, results_table, stats_row,
     compliance_table, recommendation_box, info_box, metadata_table,
     testbed_diagram, build_tc_detail, find_screenshots_for_tc,
-    verdict_color, build_styles,
+    verdict_color, verdict_banner, build_styles,
     C_TABLE_HDR, C_WHITE, C_ROW_ALT, C_GRID, C_PASS, C_FAIL,
     C_LIGHT_BLUE, C_ACCENT, C_MID_BLUE,
     mm, ParagraphStyle, TA_CENTER,
+)
+from reporting.clause_reports.clause_1_10_1_report import (
+    _group_screenshots, _screenshot_label,
 )
 
 
@@ -392,8 +397,13 @@ class PDFClause1101Report(PDFReportBase):
             status = getattr(tc, "status", "N/A")
 
             story += sub_heading(f"8.{idx} Test Case: {name}", styles)
+            story += body(desc, styles)
 
-            # Collect evidence
+            # Overall verdict for this test case
+            story.append(verdict_banner(status, styles))
+            story.append(Spacer(1, 4 * mm))
+
+            # Collect all screenshots
             ev_files = []
             for ev in getattr(tc, "evidence", []):
                 ss = ev.get("screenshot") if isinstance(ev, dict) else getattr(ev, "screenshot", None)
@@ -401,20 +411,62 @@ class PDFClause1101Report(PDFReportBase):
                     ev_files.append(ss)
             ev_files += find_screenshots_for_tc(context, self.CLAUSE_ID, name)
 
-            story += build_tc_detail(
-                tc_num=f"8.{idx}",
-                tc_id=name,
-                tc_name=desc,
-                description=desc,
-                input_cmd=getattr(tc, "input_cmd", "scapy + tcpdump"),
-                expected=getattr(tc, "expected",
-                                 "Permitted types get responses; Not Permitted types are dropped"),
-                actual_status=status,
-                output_text=getattr(tc, "output", ""),
-                verdict=status,
-                evidence_files=ev_files,
-                styles=styles,
-            )
+            # Group screenshots by sub-test
+            sub_results = getattr(tc, "sub_results", [])
+            groups = _group_screenshots(ev_files, sub_results, context)
+
+            if not groups:
+                # Fallback: old ungrouped behavior
+                story += build_tc_detail(
+                    tc_num=f"8.{idx}", tc_id=name, tc_name=desc,
+                    description=desc,
+                    input_cmd="scapy + tcpdump",
+                    expected="Permitted types get responses; Not Permitted types are dropped",
+                    actual_status=status, output_text="", verdict=status,
+                    evidence_files=ev_files, styles=styles,
+                )
+            else:
+                for sub_idx, (title, group_ss, observation, sub_status) in enumerate(groups, start=1):
+                    # Sub-test heading
+                    story += sub_sub_heading(
+                        f"8.{idx}.{sub_idx} {title}", styles)
+
+                    if sub_status:
+                        vc, _ = verdict_color(sub_status)
+                        story.append(Paragraph(
+                            f"<b>Status: {sub_status}</b>",
+                            ParagraphStyle("ss", fontName="Helvetica-Bold",
+                                           fontSize=10, textColor=vc)))
+                        story.append(Spacer(1, 2 * mm))
+
+                    # Embed each screenshot with a concise label
+                    for ss_path in group_ss:
+                        if not ss_path or not os.path.exists(ss_path):
+                            continue
+                        try:
+                            from PIL import Image as PILImage
+                            with PILImage.open(ss_path) as pi:
+                                iw, ih = pi.size
+                            max_w = 155 * mm
+                            max_h = 90 * mm
+                            scale = min(max_w / iw, max_h / ih)
+                            img = RLImage(ss_path, width=iw * scale, height=ih * scale)
+                            img.hAlign = "LEFT"
+                            label = _screenshot_label(ss_path)
+                            story.append(Paragraph(
+                                f"<b>{label}:</b>", styles["SmallGrey"]))
+                            story.append(img)
+                            story.append(Spacer(1, 2 * mm))
+                        except Exception:
+                            pass
+
+                    # Observation below all screenshots in this group
+                    if observation:
+                        story.append(Paragraph(
+                            "<b>Observations:</b>", styles["LabelBold"]))
+                        story.append(Paragraph(
+                            f"<i>{observation}</i>", styles["BodyText"]))
+                    story.append(Spacer(1, 4 * mm))
 
         story.append(PageBreak())
 

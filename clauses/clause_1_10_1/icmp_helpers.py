@@ -890,6 +890,39 @@ def check_not_permitted_process(context, ip_version, dut_ip):
         if status == "FAIL":
             violations.append(icmp_type)
 
+        # Build description for the report
+        openwrt_label = context.openwrt_ipv6 or openwrt_ip
+        if (ip_version == 4 and icmp_type == 5) or (ip_version == 6 and icmp_type == 137):
+            proc_desc = (
+                f"Process Test - ICMP Redirect (Type {icmp_type}): Traffic to the "
+                f"auxiliary machine at {aux_ip} is forced through the DuT (OpenWRT at "
+                f"{openwrt_ip}). When the router receives a packet whose best next-hop "
+                f"is on the same interface, it sends an ICMP Redirect advising the "
+                f"sender to communicate directly. The BEFORE traceroute shows packets "
+                f"traversing OpenWRT. After pinging {aux_ip}, the PCAP is checked for "
+                f"the Redirect packet. The AFTER traceroute documents whether the "
+                f"redirect was received. Per ETSI TS 133 117, the DuT MUST NOT change "
+                f"its own routing configuration based on received Redirects."
+            )
+        elif icmp_type == 133:
+            proc_desc = (
+                f"Process Test - Router Solicitation (Type 133): A crafted Router "
+                f"Solicitation is sent to the DuT at {openwrt_label}. Traceroute is "
+                f"run before and after to verify the DuT did not alter its routing "
+                f"configuration. Per ETSI, the DuT MUST NOT process Router "
+                f"Solicitations that would change its routing table."
+            )
+        elif icmp_type == 134:
+            proc_desc = (
+                f"Process Test - Router Advertisement (Type 134): A crafted Router "
+                f"Advertisement is sent to the DuT at {openwrt_label}. Traceroute is "
+                f"run before and after to verify the DuT did not alter its routing "
+                f"configuration. Per ETSI, the DuT MUST NOT process Router "
+                f"Advertisements that would change its routing table."
+            )
+        else:
+            proc_desc = ""
+
         context.current_testcase.sub_results.append({
             "test_type": "Process",
             "icmp_type": icmp_type,
@@ -897,6 +930,7 @@ def check_not_permitted_process(context, ip_version, dut_ip):
             "ip_version": ip_version,
             "status": status,
             "category": "Not Permitted",
+            "description": proc_desc,
         })
 
     return violations

@@ -1,9 +1,208 @@
 import os
+import re
+from datetime import datetime
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from reporting.base_report import BaseReport, GREEN, RED, PURPLE, PURPLE_HEX, WHITE
 
+
+# ===========================================================================
+#  Screenshot grouping helpers for sub-testcase sections
+# ===========================================================================
+
+def _extract_icmp_type(filename):
+    """Extract ICMP type number from a screenshot filename."""
+    match = re.search(r'type_(\d+)', filename.lower())
+    return int(match.group(1)) if match else None
+
+
+def _routing_sort_key(path):
+    """Sort routing screenshots: before -> table -> after."""
+    name = os.path.basename(path).lower()
+    if "before" in name:
+        return 0
+    if "routing_table" in name:
+        return 1
+    if "after" in name:
+        return 2
+    return 3
+
+
+def _redirect_sort_key(path):
+    """Sort redirect screenshots: before -> ping -> after -> pcap -> wireshark."""
+    name = os.path.basename(path).lower()
+    if "redirect_before" in name:
+        return 0
+    if "redirect_ping" in name:
+        return 1
+    if "redirect_after" in name:
+        return 2
+    if "redirect_pcap" in name:
+        return 3
+    # Wireshark packet screenshot
+    if "packet_frame" in name or "redirect_packet" in name:
+        return 4
+    return 5
+
+
+def _screenshot_label(path):
+    """Generate a concise human-readable label for a screenshot."""
+    name = os.path.basename(path).lower()
+
+    # Routing
+    if "traceroute" in name and "before" in name:
+        return "Traceroute BEFORE route setup"
+    if "traceroute" in name and "after" in name:
+        return "Traceroute AFTER route setup"
+    if "routing_table" in name:
+        return "Routing table (ip route show)"
+
+    # Redirect sub-steps
+    if "redirect_before" in name:
+        return "Traceroute BEFORE redirect trigger"
+    if "redirect_ping" in name:
+        return "Ping to trigger ICMP Redirect"
+    if "redirect_after" in name:
+        return "Traceroute AFTER redirect"
+    if "redirect_pcap" in name:
+        return "PCAP analysis for Redirect packet"
+    if "redirect_packet" in name or ("packet_frame" in name and "redirect" in name):
+        return "Wireshark: Redirect packet detail"
+
+    # Process sub-steps
+    if "process_before" in name:
+        return "Traceroute BEFORE sending crafted packet"
+    if "process_after" in name:
+        return "Traceroute AFTER sending crafted packet"
+
+    # Send / Not Permitted — terminal tshark
+    if name.startswith("tester") or (not name.startswith("packet_frame")):
+        if "notpermitted" in name:
+            return "Terminal: tshark check for NOT PERMITTED response"
+        if "send" in name:
+            return "Terminal: tshark analysis of DuT response"
+
+    # Wireshark packet screenshots
+    if "packet_frame" in name:
+        return "Wireshark: packet capture detail"
+
+    return os.path.splitext(os.path.basename(path))[0]
+
+
+def _group_screenshots(screenshots, sub_results, context):
+    """
+    Group screenshots into logical sub-test sections.
+    Returns [(title, [screenshot_paths], observation, status), ...].
+    """
+    routing = []
+    by_send_type = {}       # icmp_type -> [paths]
+    by_redirect = []
+    by_process_type = {}    # icmp_type -> [paths]
+    uncategorized = []
+
+    for ss in screenshots:
+        name = os.path.basename(ss).lower()
+        icmp_type = _extract_icmp_type(name)
+
+        if "traceroute" in name and "redirect" not in name and "process" not in name:
+            routing.append(ss)
+        elif "routing_table" in name:
+            routing.append(ss)
+        elif "redirect" in name:
+            by_redirect.append(ss)
+        elif "process" in name:
+            if icmp_type is not None:
+                by_process_type.setdefault(icmp_type, []).append(ss)
+            else:
+                uncategorized.append(ss)
+        elif "notpermitted" in name:
+            if icmp_type is not None:
+                by_send_type.setdefault(icmp_type, []).append(ss)
+            else:
+                uncategorized.append(ss)
+        elif "send" in name:
+            if icmp_type is not None:
+                by_send_type.setdefault(icmp_type, []).append(ss)
+            else:
+                uncategorized.append(ss)
+        elif "packet_frame" in name:
+            # Wireshark screenshots — match to the right group
+            if "redirect" in name:
+                by_redirect.append(ss)
+            elif "process" in name and icmp_type is not None:
+                by_process_type.setdefault(icmp_type, []).append(ss)
+            elif icmp_type is not None:
+                by_send_type.setdefault(icmp_type, []).append(ss)
+            else:
+                uncategorized.append(ss)
+        else:
+            uncategorized.append(ss)
+
+    groups = []
+
+    # 1. Routing setup
+    if routing:
+        routing.sort(key=_routing_sort_key)
+        v = "IPv6" if any("ipv6" in os.path.basename(s).lower() for s in routing) else "IPv4"
+        openwrt = context.openwrt_ip or "OpenWRT"
+        nonsense = context.nonsense_ip or context.nonsense_ipv6 or "nonsense IP"
+        aux = getattr(context, "auxiliary_ip", None) or getattr(context, "auxiliary_ipv6", None) or "auxiliary machine"
+        if v == "IPv6":
+            openwrt = context.openwrt_ipv6 or openwrt
+            nonsense = context.nonsense_ipv6 or nonsense
+            aux = getattr(context, "auxiliary_ipv6", None) or aux
+        obs = (
+            f"Static routes are added so packets to {nonsense} and {aux} "
+            f"are forwarded through the DuT (OpenWRT at {openwrt}) instead "
+            f"of taking the default direct path. The BEFORE traceroute shows "
+            f"the default network path. The routing table confirms the new "
+            f"routes are in place. The AFTER traceroute verifies packets now "
+            f"traverse through the router as an intermediate hop. This is "
+            f"required to trigger ICMP errors (Destination Unreachable, Time "
+            f"Exceeded, Redirect) from the DuT."
+        )
+        groups.append((f"Routing Setup ({v})", routing, obs, None))
+
+    # 2. Send tests (in sub_results order)
+    for sr in sub_results:
+        if sr.get("test_type") != "Send":
+            continue
+        icmp_type = sr["icmp_type"]
+        ss_list = sorted(by_send_type.get(icmp_type, []))
+        if not ss_list:
+            continue
+        category = sr.get("category", "Permitted")
+        if category == "Not Permitted":
+            title = f"{sr['icmp_name']} — NOT PERMITTED"
+        else:
+            title = f"{sr['icmp_name']} — {category}"
+        groups.append((title, ss_list, sr.get("description", ""), sr.get("status")))
+
+    # 3. Process tests (in sub_results order)
+    for sr in sub_results:
+        if sr.get("test_type") != "Process":
+            continue
+        icmp_type = sr["icmp_type"]
+        if icmp_type in (5, 137):
+            ss_list = sorted(by_redirect, key=_redirect_sort_key)
+        else:
+            ss_list = sorted(by_process_type.get(icmp_type, []))
+        if not ss_list:
+            continue
+        title = f"Process Test: {sr['icmp_name']} (Type {icmp_type}) — NOT PERMITTED"
+        groups.append((title, ss_list, sr.get("description", ""), sr.get("status")))
+
+    # 4. Uncategorized
+    if uncategorized:
+        groups.append(("Additional Evidence", sorted(uncategorized), "", None))
+
+    return groups
+
+
+# ===========================================================================
+#  DOCX Report
+# ===========================================================================
 
 class Clause1101Report(BaseReport):
     """ITSAR Clause 1.10.1 -- ICMP Type Filtering Compliance Report (DOCX)."""
@@ -13,7 +212,7 @@ class Clause1101Report(BaseReport):
     def _add_icmp_reference_tables(self, doc):
         """Add the ETSI ICMP type reference tables."""
 
-        # ── Permitted Types ──
+        # -- Permitted Types --
         self.add_itsar_subheading(doc, "Permitted ICMP Types (ETSI TS 133 117)", 2)
         permitted = [
             ("IPv4", "IPv6", "Name",                    "Send",      "Respond To"),
@@ -39,7 +238,7 @@ class Clause1101Report(BaseReport):
         self.prevent_table_row_split(table)
         doc.add_paragraph()
 
-        # ── Not Permitted Types ──
+        # -- Not Permitted Types --
         self.add_itsar_subheading(doc, "Not Permitted ICMP Types", 2)
         not_permitted = [
             ("IPv4", "IPv6", "Name",                   "Send",          "Respond To",      "Process"),
@@ -62,20 +261,41 @@ class Clause1101Report(BaseReport):
         self.prevent_table_row_split(table2)
         doc.add_paragraph()
 
+    def _add_observation(self, doc, text):
+        """Add an Observations block with purple heading and grey italic text."""
+        obs_heading = doc.add_paragraph()
+        obs_run = obs_heading.add_run("Observations:")
+        obs_run.bold = True
+        obs_run.font.size = Pt(10)
+        obs_run.font.color.rgb = PURPLE
+
+        obs_para = doc.add_paragraph()
+        obs_text = obs_para.add_run(text)
+        obs_text.italic = True
+        obs_text.font.size = Pt(9)
+        obs_text.font.color.rgb = RGBColor(0x6C, 0x75, 0x7D)
+
+    def _add_status_badge(self, doc, status):
+        """Add a status line (PASS/FAIL) with appropriate color."""
+        p = doc.add_paragraph("Status: ")
+        run = p.add_run(status)
+        run.bold = True
+        run.font.color.rgb = GREEN if status.upper() == "PASS" else RED
+
     def generate(self, context, results):
         doc = Document()
 
         self.add_page_number(doc)
         self.add_title(doc)
 
-        # ── Front Page ──
+        # -- Front Page --
         self._add_front_page(doc, context, results)
 
-        # ── 1. DUT Details ──
+        # -- 1. DUT Details --
         self.add_dut_details(doc, context, section_num="1")
         doc.add_paragraph()
 
-        # ── 2. ITSAR Information ──
+        # -- 2. ITSAR Information --
         self.add_itsar_heading(doc, "2. ITSAR Information", 2)
         table = doc.add_table(rows=5, cols=2)
         table.style = "Table Grid"
@@ -96,7 +316,7 @@ class Clause1101Report(BaseReport):
         self.prevent_table_row_split(table)
         doc.add_paragraph()
 
-        # ── 3. Requirement Description ──
+        # -- 3. Requirement Description --
         self.add_itsar_heading(doc, "3. Requirement Description", 2)
         doc.add_paragraph(
             "Processing of ICMPv4 and ICMPv6 packets which are not required for operation "
@@ -109,7 +329,7 @@ class Clause1101Report(BaseReport):
         # ICMP Reference Tables
         self._add_icmp_reference_tables(doc)
 
-        # ── 4. Preconditions ──
+        # -- 4. Preconditions --
         self.add_itsar_heading(doc, "4. Preconditions", 2)
         for item in [
             "The tester system has network connectivity to the DUT.",
@@ -122,7 +342,7 @@ class Clause1101Report(BaseReport):
             doc.add_paragraph(f"\u2022 {item}")
         doc.add_paragraph()
 
-        # ── 5. Test Objective ──
+        # -- 5. Test Objective --
         self.add_itsar_heading(doc, "5. Test Objective", 2)
         doc.add_paragraph(
             "To verify that the DUT correctly filters ICMP and ICMPv6 packet types "
@@ -132,7 +352,7 @@ class Clause1101Report(BaseReport):
         )
         doc.add_paragraph()
 
-        # ── 6. Test Scenario ──
+        # -- 6. Test Scenario --
         self.add_itsar_heading(doc, "6. Test Scenario", 2)
 
         self.add_itsar_subheading(doc, "6.1 Network Fundamentals", 2)
@@ -217,7 +437,7 @@ class Clause1101Report(BaseReport):
             doc.add_paragraph(f"\u2022 {step}")
         doc.add_paragraph()
 
-        # ── 7. Expected Results ──
+        # -- 7. Expected Results --
         self.add_itsar_heading(doc, "7. Expected Results", 2)
         doc.add_paragraph(
             "The DUT should respond to allowed ICMP types (e.g., Echo Request/Reply) "
@@ -226,34 +446,57 @@ class Clause1101Report(BaseReport):
         )
         doc.add_paragraph()
 
-        # ── 8. Test Execution ──
+        # ==================================================================
+        # 8. Test Execution — with sub-testcase sections
+        # ==================================================================
         self.add_itsar_heading(doc, "8. Test Execution", 2)
 
         for idx, tc in enumerate(results, start=1):
+            # -- 8.{idx} Test Case header --
             h = self.add_itsar_subheading(doc, f"8.{idx} Test Case: {tc.name}", 2)
             self.keep_with_next(h)
-
             doc.add_paragraph(f"Description: {tc.description}")
 
-            p = doc.add_paragraph("Result: ")
+            p = doc.add_paragraph("Overall Result: ")
             run = p.add_run(tc.status)
             run.bold = True
             run.font.color.rgb = GREEN if tc.status.upper() == "PASS" else RED
 
             self.add_grey_horizontal_line(doc)
 
-            # Embed evidence
-            for evidence in tc.evidence:
-                screenshot = evidence.get("screenshot") if isinstance(evidence, dict) else getattr(evidence, "screenshot", None)
-                if screenshot and os.path.exists(screenshot):
-                    self.add_screenshot_block(doc, f"Evidence: {os.path.basename(screenshot)}", screenshot)
-                    doc.add_paragraph()
+            # Group screenshots by sub-test
+            screenshots = self.find_screenshots(self.CLAUSE_ID, tc.name)
+            sub_results = getattr(tc, "sub_results", [])
+            groups = _group_screenshots(screenshots, sub_results, context)
 
-            self.embed_testcase_screenshots(doc, self.CLAUSE_ID, tc.name, label_prefix=f"TC{idx} -- ")
+            if not groups:
+                # Fallback: embed screenshots ungrouped (old behavior)
+                self.embed_testcase_screenshots(
+                    doc, self.CLAUSE_ID, tc.name, label_prefix=f"TC{idx} -- ")
+                continue
+
+            for sub_idx, (title, group_ss, observation, status) in enumerate(groups, start=1):
+                # -- 8.{idx}.{sub_idx} Sub-test heading --
+                self.add_itsar_subheading(
+                    doc, f"8.{idx}.{sub_idx} {title}", 3)
+
+                if status:
+                    self._add_status_badge(doc, status)
+
+                # Embed each screenshot with a concise label
+                for img_path in group_ss:
+                    label = _screenshot_label(img_path)
+                    self.add_screenshot_block(doc, label, img_path)
+
+                # Observation below the screenshots
+                if observation:
+                    self._add_observation(doc, observation)
+
+                doc.add_paragraph()
 
         doc.add_paragraph()
 
-        # ── 9. Test Observation ──
+        # -- 9. Test Observation --
         self.add_itsar_heading(doc, "9. Test Observation", 2)
         failed = [tc for tc in results if tc.status.upper() != "PASS"]
         if failed:
@@ -271,7 +514,7 @@ class Clause1101Report(BaseReport):
             )
         doc.add_paragraph()
 
-        # ── 10. Test Case Result Summary ──
+        # -- 10. Test Case Result Summary --
         self.add_result_summary(doc, results, section_num="10")
         doc.add_paragraph()
 
@@ -285,7 +528,7 @@ class Clause1101Report(BaseReport):
             self.add_itsar_subheading(doc, "10.1 Per-ICMP-Type Detailed Results", 2)
             doc.add_paragraph(
                 "The table below shows the individual PASS/FAIL result for each ICMP type "
-                "tested across all categories (Respond To, Send, Process)."
+                "tested across all categories (Send, Process)."
             )
 
             all_sub.sort(key=lambda s: (s.get("ip_version", 0),
@@ -320,11 +563,11 @@ class Clause1101Report(BaseReport):
             self.prevent_table_row_split(table)
             doc.add_paragraph()
 
-        # ── 11. Compliance Analysis ──
+        # -- 11. Compliance Analysis --
         self._add_compliance_analysis(doc, results, section_num="11")
         doc.add_paragraph()
 
-        # ── 12. Conclusion & Recommendations ──
+        # -- 12. Conclusion & Recommendations --
         self._add_conclusion(doc, results, section_num="12", recommendations=[
             "Configure the DUT firewall to drop ICMPv4 Type 5 (Redirect), 13 (Timestamp), and 14 (Timestamp Reply).",
             "Configure the DUT to drop ICMPv6 Type 133 (Router Solicitation), 134 (Router Advertisement), and 137 (Redirect).",

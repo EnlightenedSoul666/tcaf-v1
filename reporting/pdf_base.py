@@ -337,18 +337,54 @@ def describe_screenshot(filename):
                 "The captured packets confirm the DuT correctly originates this ICMP type "
                 "when the appropriate network condition is provoked.")
 
-    # ── ICMP Process tests ──
+    # ── ICMP Redirect tests (logical flow) ──
+    if "redirect_before" in suffix:
+        icmp_type = _extract_type(suffix)
+        v, tname = _ip_label(suffix, icmp_type)
+        return (f"Redirect test — BEFORE ({v}): Traceroute to the auxiliary machine showing "
+                f"the forced path through the DuT (OpenWRT). A static route was added so "
+                f"packets traverse the router, which is required to trigger a Redirect.")
+    if "redirect_ping" in suffix:
+        icmp_type = _extract_type(suffix)
+        v, tname = _ip_label(suffix, icmp_type)
+        return (f"Redirect test — PING ({v}): Ping to the auxiliary machine via the forced "
+                f"route through OpenWRT. When the router sees the destination is on the same "
+                f"interface the packet arrived on, it forwards the packet and sends an ICMP "
+                f"Redirect (Type {icmp_type}) back to the sender.")
+    if "redirect_after" in suffix:
+        icmp_type = _extract_type(suffix)
+        v, tname = _ip_label(suffix, icmp_type)
+        return (f"Redirect test — AFTER ({v}): Traceroute after the redirect. If the host "
+                f"processed the Redirect, the path may now go directly to the auxiliary "
+                f"machine. This verifies the Redirect was sent by the router. Per ETSI, "
+                f"the DuT itself MUST NOT change its config from received Redirects.")
+    if "redirect_pcap" in suffix:
+        icmp_type = _extract_type(suffix)
+        v, tname = _ip_label(suffix, icmp_type)
+        return (f"Redirect test — PCAP analysis ({v}): tshark filter for ICMP Redirect "
+                f"(Type {icmp_type}) packets from the DuT. If packets appear, the router "
+                f"correctly generated a Redirect. The PCAP confirms whether the DuT sent "
+                f"the Redirect to the tester.")
+    if "redirect_packet" in suffix or ("packet_frame" in suffix and "redirect" in suffix):
+        icmp_type = _extract_type(suffix)
+        v, tname = _ip_label(suffix, icmp_type)
+        return (f"Redirect test — Wireshark detail ({v}): Packet-level view of the ICMP "
+                f"Redirect (Type {icmp_type}) sent by the DuT. The packet shows the "
+                f"suggested gateway (direct route to the auxiliary machine) that the "
+                f"router is advising the sender to use.")
+
+    # ── ICMP Process tests (RS/RA) ──
     if "process_before" in suffix:
         icmp_type = _extract_type(suffix)
         v, tname = _ip_label(suffix, icmp_type)
-        return (f"Process Not Permitted — BEFORE test ({v}): traceroute to the auxiliary "
+        return (f"Process Not Permitted — BEFORE test ({v}): Traceroute to the auxiliary "
                 f"machine captured before sending ICMP Type {icmp_type} ({tname}) to the DuT. "
                 "This establishes the baseline network path. The DuT must not alter its "
                 "routing configuration in response to this ICMP type.")
     if "process_after" in suffix:
         icmp_type = _extract_type(suffix)
         v, tname = _ip_label(suffix, icmp_type)
-        return (f"Process Not Permitted — AFTER test ({v}): traceroute to the auxiliary "
+        return (f"Process Not Permitted — AFTER test ({v}): Traceroute to the auxiliary "
                 f"machine captured after sending ICMP Type {icmp_type} ({tname}) to the DuT. "
                 "Comparing with the BEFORE traceroute confirms the DuT did NOT process "
                 "or act upon this ICMP message — the path remains unchanged.")

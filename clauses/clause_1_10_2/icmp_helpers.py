@@ -927,7 +927,7 @@ def check_not_permitted_process(context, ip_version, dut_ip):
                 f"still traverses OpenWRT, the Redirect was ignored (PASS). If the "
                 f"path has collapsed to a direct hop, the Redirect was accepted and "
                 f"the system is non-compliant (FAIL). Per ETSI TS 133 117 clause "
-                f"1.10.1, the DuT MUST NOT alter its routing table based on received "
+                f"1.10.2, the DuT MUST NOT alter its routing table based on received "
                 f"ICMP Redirects. The captured PCAP + Wireshark frame document that "
                 f"the stimulus actually reached the tester."
             )
@@ -949,7 +949,7 @@ def check_not_permitted_process(context, ip_version, dut_ip):
                 f"table did not shift in response to the solicitation (PASS). Any "
                 f"change in hop count, next-hop address, or latency would indicate "
                 f"the DuT reconfigured itself on receipt of an RS (FAIL). Per ETSI "
-                f"TS 133 117 clause 1.10.1 the DuT MUST NOT process incoming Router "
+                f"TS 133 117 clause 1.10.2 the DuT MUST NOT process incoming Router "
                 f"Solicitations in a way that alters its routing configuration."
             )
         elif icmp_type == 134:
@@ -970,7 +970,7 @@ def check_not_permitted_process(context, ip_version, dut_ip):
                 f"check is a direct string comparison of the two traceroute outputs: "
                 f"identical = DuT ignored the RA (PASS); different next-hop, hop "
                 f"count or gateway = DuT accepted the RA and reconfigured (FAIL). "
-                f"Per ETSI TS 133 117 clause 1.10.1 the DuT MUST NOT process "
+                f"Per ETSI TS 133 117 clause 1.10.2 the DuT MUST NOT process "
                 f"incoming Router Advertisements in a way that alters its routing "
                 f"configuration."
             )

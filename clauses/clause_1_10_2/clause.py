@@ -1,7 +1,7 @@
 import subprocess
 from core.clause import BaseClause
-from clauses.clause_1_10_1.tc1_icmp import TC1ICMPIPv4
-from clauses.clause_1_10_1.tc2_icmp import TC2ICMPIPv6
+from clauses.clause_1_10_2.tc1_icmp import TC1ICMPIPv4
+from clauses.clause_1_10_2.tc2_icmp import TC2ICMPIPv6
 
 
 def _discover_ipv6_via_ssh(host, username, password):
@@ -36,7 +36,7 @@ def _discover_ipv6_via_ssh(host, username, password):
         return None
 
 
-class Clause_1_10_1(BaseClause):
+class Clause_1_10_2(BaseClause):
 
     REQUIRES_SSH       = False
     REQUIRES_IPV6      = True

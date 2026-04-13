@@ -9,24 +9,24 @@ Supports two formats:
 # ── DOCX Reports ──────────────────────────────────────────────────────────
 from reporting.clause_reports.clause_1_1_1_report import Clause111Report
 from reporting.clause_reports.clause_1_9_2_report import Clause192Report
-from reporting.clause_reports.clause_1_10_1_report import Clause1101Report
+from reporting.clause_reports.clause_1_10_2_report import Clause1102Report
 
 # ── PDF Reports (ReportLab) ──────────────────────────────────────────────
 from reporting.pdf_reports.pdf_clause_1_1_1 import PDFClause111Report
 from reporting.pdf_reports.pdf_clause_1_9_2 import PDFClause192Report
-from reporting.pdf_reports.pdf_clause_1_10_1 import PDFClause1101Report
+from reporting.pdf_reports.pdf_clause_1_10_2 import PDFClause1102Report
 
 
 DOCX_REGISTRY = {
     "1.1.1":  Clause111Report,
     "1.9.2":  Clause192Report,
-    "1.10.1": Clause1101Report,
+    "1.10.2": Clause1102Report,
 }
 
 PDF_REGISTRY = {
     "1.1.1":  PDFClause111Report,
     "1.9.2":  PDFClause192Report,
-    "1.10.1": PDFClause1101Report,
+    "1.10.2": PDFClause1102Report,
 }
 
 

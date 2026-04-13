@@ -223,10 +223,10 @@ def _group_screenshots(screenshots, sub_results, context):
 #  DOCX Report
 # ===========================================================================
 
-class Clause1101Report(BaseReport):
-    """ITSAR Clause 1.10.1 -- ICMP Type Filtering Compliance Report (DOCX)."""
+class Clause1102Report(BaseReport):
+    """ITSAR Clause 1.10.2 -- ICMP Type Filtering Compliance Report (DOCX)."""
 
-    CLAUSE_ID = "1.10.1"
+    CLAUSE_ID = "1.10.2"
 
     def _add_icmp_reference_tables(self, doc):
         """Add the ETSI ICMP type reference tables."""
@@ -323,7 +323,7 @@ class Clause1101Report(BaseReport):
             cell.text = header
             self.style_table_header(cell)
         info_rows = [
-            ("ITSAR Section",   "1.10.1"),
+            ("ITSAR Section",   "1.10.2"),
             ("Requirement",     "ICMP Type Filtering"),
             ("ETSI Reference",  "ETSI TS 133 117 V17.2.0, Section 4.2.4.1.1.2"),
             ("TSDSI Reference", "TSDSI STD T1.3GPP 33.117-17.2.0 V.1.0.0"),

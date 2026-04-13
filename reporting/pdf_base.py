@@ -262,6 +262,15 @@ ICMP_TYPE_NAMES_V6 = {
 }
 
 
+def _classify_port_for_desc(port_num):
+    """Look up a port in the IANA/RFC registry for screenshot descriptions."""
+    try:
+        from clauses.clause_1_9_2.nmap_parser import classify_port
+        return classify_port(port_num)
+    except Exception:
+        return ("unknown", "https://www.iana.org/assignments/service-names-port-numbers/service-names-port-numbers.xhtml", False)
+
+
 def describe_screenshot(filename):
     """
     Generate a human-readable explanation for a screenshot based on its filename.
@@ -391,30 +400,53 @@ def describe_screenshot(filename):
 
     # ── Port scan evidence ──
     if "tcp_scan_results" in suffix:
-        return ("Nmap TCP SYN scan results showing all discovered open TCP ports on the DuT. "
-                "Each open port is listed with its service name. These results are compared "
-                "against the vendor-documented list of required services.")
+        return ("Nmap TCP SYN scan (nmap -sS -p- -Pn -n -T5 --max-retries=0 <DuT_IP>): "
+                "A TCP SYN probe is sent to every port (1-65535). If the DuT replies with "
+                "SYN-ACK, the port is marked 'open'. Only a SYN is sent — the handshake is "
+                "never completed (half-open scan), making it stealthy and fast. The results "
+                "above list every open TCP port and the service nmap associates with it. "
+                "Each port is then classified against the IANA/RFC registry to determine "
+                "compliance.")
     if "udp_scan_results" in suffix:
-        return ("Nmap UDP scan results showing all discovered open UDP ports on the DuT. "
-                "UDP scanning identifies services that respond to connectionless probes. "
-                "Only vendor-documented UDP services should be found open.")
+        return ("Nmap UDP scan (nmap -sU -p- -Pn -n -T5 --max-retries=0 <DuT_IP>): "
+                "A UDP probe is sent to every port. If no ICMP 'port unreachable' is "
+                "returned, the port is considered 'open|filtered'. A genuine application "
+                "response marks it 'open'. UDP scanning is slower than TCP because there "
+                "is no handshake — the scanner waits for timeouts. Only vendor-documented "
+                "UDP services should be found open.")
     if "sctp_scan_results" in suffix:
-        return ("Nmap SCTP INIT scan results showing discovered open SCTP ports on the DuT. "
-                "SCTP is used in telecom signaling; only documented SCTP services should respond.")
+        return ("Nmap SCTP INIT scan (nmap -sY -p- -Pn -n -T5 --max-retries=0 <DuT_IP>): "
+                "An SCTP INIT chunk is sent to every port. If the DuT replies with INIT-ACK, "
+                "the port is open. SCTP is a transport protocol used primarily in telecom "
+                "signaling (SS7/SIGTRAN/Diameter). Only documented SCTP services should "
+                "respond on a CPE.")
     if "tcp_port_" in suffix:
         port = suffix.split("tcp_port_")[-1].split("_")[0]
-        return (f"Wireshark packet capture showing the TCP SYN/SYN-ACK handshake for port {port}, "
-                f"confirming this port is open and responsive on the DuT. The three-way handshake "
-                "sequence (SYN → SYN-ACK → ACK) is visible in the capture.")
+        svc, url, common = _classify_port_for_desc(int(port) if port.isdigit() else 0)
+        verdict = "commonly used for packet transfer" if common else "NOT commonly used — non-compliant"
+        return (f"TCP Port {port} — {svc}: Wireshark packet capture showing the TCP "
+                f"SYN/SYN-ACK handshake confirming this port is open on the DuT. "
+                f"The nmap probe sent a single SYN packet; the DuT replied with SYN-ACK, "
+                f"proving the service is listening. Per IANA/RFC this port is assigned to "
+                f"{svc} ({url}). Classification: {verdict}.")
     if "udp_port_" in suffix:
         port = suffix.split("udp_port_")[-1].split("_")[0]
-        return (f"Wireshark packet capture showing the UDP request/response for port {port}. "
-                "The presence of a response packet confirms this UDP port is open and active "
-                "on the DuT.")
+        svc, url, common = _classify_port_for_desc(int(port) if port.isdigit() else 0)
+        verdict = "commonly used for packet transfer" if common else "NOT commonly used — non-compliant"
+        return (f"UDP Port {port} — {svc}: Wireshark packet capture showing the UDP "
+                f"request/response confirming this port is open on the DuT. "
+                f"Unlike TCP, UDP has no handshake — a response from the DuT "
+                f"(rather than ICMP port-unreachable) confirms the service is active. "
+                f"Per IANA/RFC this port is assigned to {svc} ({url}). "
+                f"Classification: {verdict}.")
     if "sctp_port_" in suffix:
         port = suffix.split("sctp_port_")[-1].split("_")[0]
-        return (f"Wireshark packet capture showing the SCTP INIT/INIT-ACK exchange for port {port}, "
-                "confirming this SCTP port is open on the DuT.")
+        svc, url, common = _classify_port_for_desc(int(port) if port.isdigit() else 0)
+        verdict = "commonly used for packet transfer" if common else "NOT commonly used — non-compliant"
+        return (f"SCTP Port {port} — {svc}: Wireshark packet capture showing the "
+                f"SCTP INIT/INIT-ACK exchange confirming this port is open. "
+                f"Per IANA/RFC this port is assigned to {svc} ({url}). "
+                f"Classification: {verdict}.")
 
     # ── SSH / crypto evidence ──
     if "ssh" in suffix or "cipher" in suffix or "crypto" in suffix:
@@ -462,6 +494,20 @@ def _ip_label(suffix, icmp_type):
     return "IPv4", ICMP_TYPE_NAMES_V4.get(icmp_type, f"Type {icmp_type}")
 
 
+def _enrich_label(ef, label):
+    """Enrich a screenshot label with service info for port-specific captures."""
+    lower = os.path.basename(ef).lower()
+    for proto in ("tcp", "udp", "sctp"):
+        tag = f"{proto}_port_"
+        if tag in lower:
+            port_str = lower.split(tag)[-1].split("_")[0].split(".")[0]
+            if port_str.isdigit():
+                svc, url, common = _classify_port_for_desc(int(port_str))
+                verdict = "PASS" if common else "FAIL"
+                return f"{proto.upper()} Port {port_str} — {svc} [{verdict}]"
+    return label
+
+
 def screenshot_block(evidence_files, label, styles):
     """Embed PNG screenshots with explanatory descriptions below each image."""
     items = []
@@ -477,9 +523,10 @@ def screenshot_block(evidence_files, label, styles):
             scale = min(max_w / iw, max_h / ih)
             img = RLImage(ef, width=iw * scale, height=ih * scale)
             img.hAlign = "LEFT"
+            enriched = _enrich_label(ef, label)
             items += [
                 Spacer(1, 2 * mm),
-                Paragraph(f"<b>Screenshot Evidence -- {label}:</b>", styles["SmallGrey"]),
+                Paragraph(f"<b>Screenshot Evidence -- {enriched}:</b>", styles["SmallGrey"]),
                 img,
             ]
 

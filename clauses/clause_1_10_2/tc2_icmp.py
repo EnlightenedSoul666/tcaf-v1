@@ -1,5 +1,5 @@
 from core.testcase import TestCase
-from clauses.clause_1_10_1.icmp_helpers import (
+from clauses.clause_1_10_2.icmp_helpers import (
     run_unified_send_tests,
     check_not_permitted_process,
     setup_routing, teardown_routing,

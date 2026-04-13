@@ -351,7 +351,7 @@ class BaseReport:
     # ─────────────────────────────────────────
     def embed_testcase_screenshots(self, doc, clause, testcase_name, label_prefix=""):
         """Find and embed all screenshots for a test case, with explanations."""
-        from reporting.pdf_base import describe_screenshot
+        from reporting.pdf_base import describe_screenshot, _classify_port_for_desc
 
         screenshots = self.find_screenshots(clause, testcase_name)
         for img_path in screenshots:
@@ -362,6 +362,20 @@ class BaseReport:
                 title = f"{label_prefix}{parts[3]}" if label_prefix else parts[3]
             else:
                 title = f"{label_prefix}{basename}" if label_prefix else basename
+
+            # Enrich title for port-specific screenshots with service name
+            lower = basename.lower()
+            for proto in ("tcp", "udp", "sctp"):
+                tag = f"{proto}_port_"
+                if tag in lower:
+                    port_str = lower.split(tag)[-1].split("_")[0]
+                    if port_str.isdigit():
+                        svc, url, common = _classify_port_for_desc(int(port_str))
+                        verdict_tag = "PASS" if common else "FAIL"
+                        title = (f"{label_prefix}{proto.upper()} Port {port_str} "
+                                 f"— {svc} [{verdict_tag}]")
+                    break
+
             self.add_screenshot_block(doc, title, img_path)
 
             # Add Observations paragraph below the image

@@ -1,5 +1,5 @@
 """
-ReportLab PDF — ITSAR Clause 1.10.1: ICMP Type Filtering Compliance.
+ReportLab PDF — ITSAR Clause 1.10.2: ICMP Type Filtering Compliance.
 
 12-section ITSAR-format native PDF with:
   - Cover page with banners + metadata + OVERALL RESULT
@@ -28,7 +28,7 @@ from reporting.pdf_base import (
     C_LIGHT_BLUE, C_ACCENT, C_MID_BLUE,
     mm, ParagraphStyle, TA_CENTER,
 )
-from reporting.clause_reports.clause_1_10_1_report import (
+from reporting.clause_reports.clause_1_10_2_report import (
     _group_screenshots, _screenshot_label,
 )
 
@@ -95,10 +95,10 @@ def _per_type_results_table(results, styles):
     return [tbl]
 
 
-class PDFClause1101Report(PDFReportBase):
+class PDFClause1102Report(PDFReportBase):
 
-    CLAUSE_ID    = "1.10.1"
-    HEADER_TITLE = "ICMP TYPE FILTERING COMPLIANCE TEST REPORT  |  ITSAR 1.10.1"
+    CLAUSE_ID    = "1.10.2"
+    HEADER_TITLE = "ICMP TYPE FILTERING COMPLIANCE TEST REPORT  |  ITSAR 1.10.2"
 
     def _icmp_reference_tables(self, styles):
         """Build the ETSI ICMP type reference tables (Permitted + Not Permitted)."""
@@ -189,9 +189,9 @@ class PDFClause1101Report(PDFReportBase):
         # ── COVER PAGE ────────────────────────────────────────────────────
         story += build_cover_page(
             clause_title="ICMP Type Filtering Compliance Verification",
-            clause_subtitle="ITSAR Clause 1.10.1 -- ICMPv4/ICMPv6 Packet Handling",
+            clause_subtitle="ITSAR Clause 1.10.2 -- ICMPv4/ICMPv6 Packet Handling",
             meta_rows=[
-                ("ITSAR Clause",     "1.10.1"),
+                ("ITSAR Clause",     "1.10.2"),
                 ("ETSI Reference",   "ETSI TS 133 117 V17.2.0, Section 4.2.4.1.1.2"),
                 ("TSDSI Reference",  "TSDSI STD T1.3GPP 33.117-17.2.0 V.1.0.0"),
                 ("Test Date",        now.strftime("%B %d, %Y")),
@@ -540,7 +540,7 @@ class PDFClause1101Report(PDFReportBase):
         if overall == "PASS":
             story += body(
                 f"All {total} test case(s) passed. The DUT correctly implements ICMP "
-                "type filtering as prescribed by ITSAR clause 1.10.1 and ETSI TS 133 117. "
+                "type filtering as prescribed by ITSAR clause 1.10.2 and ETSI TS 133 117. "
                 "Forbidden ICMP types are silently dropped, and the DUT does not originate "
                 "or process them.", styles)
         else:

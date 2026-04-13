@@ -7,9 +7,9 @@ from clauses.clause_1_10_2.tc2_icmp import TC2ICMPIPv6
 def _discover_ipv6_via_ssh(host, username, password):
     """SSH into a machine and return its first global-scope ULA IPv6 address."""
     cmd = (
-        f"sshpass -p '{password}' ssh -o StrictHostKeyChecking=no "
-        f"-o ConnectTimeout=5 "
-        f"-o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa "
+        f"sshpass -p '{password}' ssh -o KexAlgorithms=diffie-hellman-group-exchange-sha1 "
+        f"-o HostKeyAlgorithms=ssh-rsa -o Ciphers=aes256-cbc "
+        f"-o StrictHostKeyChecking=no -o ConnectTimeout=5 "
         f"{username}@{host} 'ip -6 addr show scope global 2>/dev/null; ifconfig 2>/dev/null'"
     )
     try:

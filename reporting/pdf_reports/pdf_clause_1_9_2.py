@@ -4,6 +4,7 @@ ReportLab PDF — ITSAR Clause 1.9.2: Open Port Compliance.
 12-section ITSAR-format native PDF with:
   - Cover page with banners + metadata + OVERALL RESULT
   - Per-test-case 7-field breakdown (a-g) for each scan type
+  - Per-port RFC classification table with citations
   - Compliance analysis table
   - Recommendations
 """
@@ -11,7 +12,8 @@ ReportLab PDF — ITSAR Clause 1.9.2: Open Port Compliance.
 import os
 import datetime
 
-from reportlab.platypus import Spacer, PageBreak
+from reportlab.platypus import Spacer, PageBreak, Paragraph, Table, TableStyle
+from reportlab.lib import colors
 
 from reporting.pdf_base import (
     PDFReportBase, W,
@@ -19,8 +21,86 @@ from reporting.pdf_base import (
     output_block, results_table, stats_row, compliance_table,
     recommendation_box, info_box, metadata_table, testbed_diagram,
     build_tc_detail, find_screenshots_for_tc, verdict_color,
-    mm, ParagraphStyle, TA_CENTER,
+    mm, ParagraphStyle, TA_CENTER, TA_LEFT,
+    C_TABLE_HDR, C_WHITE, C_GRID, C_ROW_ALT, C_PASS, C_FAIL, C_GREY,
 )
+
+
+# IANA master registry — cited in the classification table
+IANA_URL = (
+    "https://www.iana.org/assignments/service-names-port-numbers/"
+    "service-names-port-numbers.xhtml"
+)
+
+
+def _port_classification_table(sub_results, scan_label, styles):
+    """
+    Build a ReportLab Table showing per-port RFC classification.
+    Returns a list of flowables (heading + table + footnote).
+    """
+    if not sub_results:
+        return body("No open ports discovered for this scan type.", styles)
+
+    elems = []
+    elems += sub_heading(f"Port Classification — {scan_label}", styles)
+
+    hdr_s = ParagraphStyle(
+        "pct_hdr", fontName="Helvetica-Bold", fontSize=8,
+        textColor=C_WHITE, alignment=TA_CENTER,
+    )
+    cell_s = ParagraphStyle(
+        "pct_cell", fontName="Helvetica", fontSize=7.5,
+        textColor=colors.black, alignment=TA_CENTER,
+    )
+    cell_left = ParagraphStyle(
+        "pct_cell_l", fontName="Helvetica", fontSize=7.5,
+        textColor=colors.black, alignment=TA_LEFT,
+    )
+
+    headers = ["Port", "Proto", "nmap Svc", "RFC Service", "RFC / Standard", "Common?", "Verdict"]
+    data = [[Paragraph(h, hdr_s) for h in headers]]
+
+    for sr in sub_results:
+        vc = C_PASS if sr.get("status") == "PASS" else C_FAIL
+        verdict_s = ParagraphStyle(
+            "vd", fontName="Helvetica-Bold", fontSize=8,
+            textColor=vc, alignment=TA_CENTER,
+        )
+        data.append([
+            Paragraph(str(sr["port"]), cell_s),
+            Paragraph(sr.get("proto", "").upper(), cell_s),
+            Paragraph(sr.get("nmap_service", "")[:20], cell_s),
+            Paragraph(sr.get("rfc_service", "unknown")[:25], cell_s),
+            Paragraph(sr.get("rfc_url", IANA_URL)[:55], cell_left),
+            Paragraph("Yes" if sr.get("is_common") else "No", cell_s),
+            Paragraph(sr.get("status", "FAIL"), verdict_s),
+        ])
+
+    col_w = [12*mm, 12*mm, 22*mm, 28*mm, 55*mm, 14*mm, 16*mm]
+    tbl = Table(data, colWidths=col_w, repeatRows=1)
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND",     (0, 0), (-1, 0), C_TABLE_HDR),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [C_WHITE, C_ROW_ALT]),
+        ("GRID",           (0, 0), (-1, -1), 0.3, C_GRID),
+        ("VALIGN",         (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING",     (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING",  (0, 0), (-1, -1), 3),
+        ("LEFTPADDING",    (0, 0), (-1, -1), 3),
+    ]))
+    elems.append(tbl)
+
+    # Footnote with IANA reference
+    fn_s = ParagraphStyle(
+        "pct_fn", fontName="Helvetica-Oblique", fontSize=7,
+        textColor=C_GREY,
+    )
+    elems.append(Spacer(1, 2))
+    elems.append(Paragraph(
+        f"Port assignments verified against the IANA Service Name and "
+        f"Transport Protocol Port Number Registry: {IANA_URL}", fn_s))
+    elems.append(Spacer(1, 4))
+
+    return elems
 
 
 class PDFClause192Report(PDFReportBase):
@@ -105,8 +185,10 @@ class PDFClause192Report(PDFReportBase):
         story += section_header("5. Test Objective", styles)
         story += body(
             "To identify all open ports on the DUT using TCP SYN, UDP, and SCTP INIT "
-            "scan techniques. The discovered open ports are documented with packet "
-            "capture evidence showing the request and response for each open port.",
+            "scan techniques. Each discovered open port is matched against the IANA "
+            "Service Name and Transport Protocol Port Number Registry (RFC-based) to "
+            "determine whether it corresponds to a service commonly required for "
+            "packet transfer. The test FAILS if even one port is not commonly used.",
             styles)
 
         # ── 6. Test Scenario ──────────────────────────────────────────────
@@ -139,7 +221,9 @@ class PDFClause192Report(PDFReportBase):
             "Run nmap scan against the DUT for all 65535 ports (TCP SYN, UDP, SCTP INIT).",
             "Stop the packet capture after each scan completes.",
             "Parse nmap output to identify open ports and services.",
+            "Classify each port against the IANA/RFC well-known port registry.",
             "Take Wireshark screenshots for each discovered open port showing request/response.",
+            "Mark FAIL if any discovered port is not commonly used for packet transfer.",
         ]:
             story.append(bullet(step, styles))
         story.append(Spacer(1, 4))
@@ -148,8 +232,9 @@ class PDFClause192Report(PDFReportBase):
         story += section_header("7. Expected Results for Pass", styles)
         story += body(
             "Only documented and operationally necessary service ports should be found open. "
-            "The packet captures should show SYN/SYN-ACK (TCP), response packets (UDP), "
-            "or INIT/INIT-ACK (SCTP) for each open port. No undocumented ports should respond.",
+            "Every open port must map to a well-known service defined in an RFC or IANA "
+            "standard that is commonly required for packet transfer on a CPE. "
+            "The test FAILS if even one open port does not meet this criterion.",
             styles)
 
         story.append(PageBreak())
@@ -181,7 +266,7 @@ class PDFClause192Report(PDFReportBase):
                 tc_name=f"{scan_label} -- {desc}",
                 description=f"Perform {scan_label} on all 65535 ports of the DUT to identify open services.",
                 input_cmd=full_cmd,
-                expected="Only vendor-documented ports should be open.",
+                expected="Only vendor-documented ports should be open. FAIL if any non-standard port found.",
                 actual_status=status,
                 output_text=getattr(tc, "output", ""),
                 verdict=status,
@@ -189,22 +274,67 @@ class PDFClause192Report(PDFReportBase):
                 styles=styles,
             )
 
+            # ── Port Classification Table ──
+            sub_results = getattr(tc, "sub_results", [])
+            if sub_results:
+                story += _port_classification_table(sub_results, scan_label, styles)
+
+                # Observation paragraph
+                non_std = [sr for sr in sub_results if not sr.get("is_common")]
+                if non_std:
+                    port_list = ", ".join(
+                        f"{sr['port']}/{sr.get('proto','').upper()} "
+                        f"({sr.get('rfc_service','unknown')})"
+                        for sr in non_std
+                    )
+                    obs_s = ParagraphStyle(
+                        "obs_fail", fontName="Helvetica-Oblique", fontSize=8,
+                        textColor=C_FAIL,
+                    )
+                    story.append(Paragraph(
+                        f"<b>NON-COMPLIANT:</b> {len(non_std)} port(s) are NOT commonly "
+                        f"used for packet transfer: {port_list}. "
+                        f"RFC citations are in the table above.", obs_s))
+                    story.append(Spacer(1, 4))
+
         story.append(PageBreak())
 
         # ── 9. Test Observation ───────────────────────────────────────────
         story += section_header("9. Test Observation", styles)
+
+        all_non_std = []
+        all_std = []
+        for tc in results:
+            for sr in getattr(tc, "sub_results", []):
+                if sr.get("is_common"):
+                    all_std.append(sr)
+                else:
+                    all_non_std.append(sr)
+
         failed_names = [getattr(tc, "name", "?") for tc in results
                         if getattr(tc, "status", "FAIL").upper() != "PASS"]
         if failed_names:
             story += body(
-                f"The following scan(s) did not complete successfully or found unexpected "
-                f"open ports: {', '.join(failed_names)}. Review the evidence to determine "
-                f"if undocumented ports are open on the DUT.", styles)
+                f"The following scan(s) reported non-compliant ports: "
+                f"{', '.join(failed_names)}.", styles)
+            if all_non_std:
+                port_detail = "; ".join(
+                    f"Port {sr['port']}/{sr.get('proto','').upper()} — "
+                    f"{sr.get('rfc_service','unknown')} "
+                    f"(Ref: {sr.get('rfc_url', IANA_URL)})"
+                    for sr in all_non_std
+                )
+                story += body(
+                    f"Non-standard open ports: {port_detail}. "
+                    f"These ports are not commonly required for packet transfer "
+                    f"and trigger an automatic FAIL verdict.", styles)
         else:
+            total_ports = len(all_std) + len(all_non_std)
             story += body(
-                "All port scanning test cases completed successfully. The open ports "
-                "discovered on the DUT have been documented with packet capture evidence "
-                "for compliance review. Only expected services were found responsive.",
+                f"All port scanning test cases completed successfully. "
+                f"{total_ports} open port(s) were discovered, all mapping to "
+                f"well-known services commonly required for packet transfer "
+                f"per IANA/RFC definitions.",
                 styles)
         story.append(Spacer(1, 4))
 
@@ -240,8 +370,9 @@ class PDFClause192Report(PDFReportBase):
                 "with ITSAR clause 1.9.2.", styles)
         else:
             story += body(
-                f"The test identified {failed} failed scan(s). The DUT may expose "
-                "undocumented or unnecessary ports. Remediation is required before "
+                f"The test identified {failed} failed scan(s) with non-standard "
+                "open ports. The DUT exposes ports that are not commonly used for "
+                "packet transfer. Remediation is required before "
                 "the DUT can be considered compliant with ITSAR clause 1.9.2.", styles)
 
         story.append(recommendation_box(

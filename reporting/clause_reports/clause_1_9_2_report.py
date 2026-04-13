@@ -1,7 +1,14 @@
 import os
 from docx import Document
-from docx.shared import Pt
-from reporting.base_report import BaseReport, GREEN, RED
+from docx.shared import Pt, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from reporting.base_report import BaseReport, GREEN, RED, PURPLE
+
+# IANA master registry — cited in the Port Classification table
+IANA_URL = (
+    "https://www.iana.org/assignments/service-names-port-numbers/"
+    "service-names-port-numbers.xhtml"
+)
 
 
 class Clause192Report(BaseReport):
@@ -15,6 +22,58 @@ class Clause192Report(BaseReport):
         "TC3_SCTP_SCAN": ("SCTP INIT Scan", "nmap -sY -p- -Pn -n -T4"),
     }
 
+    # ------------------------------------------------------------------ helpers
+    def _add_port_classification_table(self, doc, sub_results, scan_label):
+        """
+        Add a table showing each discovered port, its IANA/RFC service,
+        the RFC citation, and a per-port PASS/FAIL verdict.
+        """
+        if not sub_results:
+            doc.add_paragraph("No open ports discovered for this scan type.")
+            return
+
+        self.add_itsar_subheading(
+            doc, f"Port Classification — {scan_label}", 3)
+
+        headers = ["Port", "Protocol", "nmap Service", "RFC Service",
+                   "RFC / Standard", "Common", "Verdict"]
+        table = doc.add_table(rows=len(sub_results) + 1, cols=len(headers))
+        table.style = "Table Grid"
+
+        for i, h in enumerate(headers):
+            cell = table.rows[0].cells[i]
+            cell.text = h
+            self.style_table_header(cell)
+
+        for r, sr in enumerate(sub_results, start=1):
+            table.rows[r].cells[0].text = str(sr["port"])
+            table.rows[r].cells[1].text = sr.get("proto", "").upper()
+            table.rows[r].cells[2].text = sr.get("nmap_service", "")
+            table.rows[r].cells[3].text = sr.get("rfc_service", "unknown")
+            table.rows[r].cells[4].text = sr.get("rfc_url", IANA_URL)
+            table.rows[r].cells[5].text = "Yes" if sr.get("is_common") else "No"
+
+            verdict_cell = table.rows[r].cells[6]
+            verdict = sr.get("status", "FAIL")
+            verdict_cell.text = verdict
+            for para in verdict_cell.paragraphs:
+                for run in para.runs:
+                    run.bold = True
+                    run.font.color.rgb = GREEN if verdict == "PASS" else RED
+
+        self.add_data_cell_padding(table, skip_first_row=True)
+        self.prevent_table_row_split(table)
+
+        # Citation note
+        ref = doc.add_paragraph()
+        ref_run = ref.add_run(
+            f"Port assignments verified against the IANA Service Name and "
+            f"Transport Protocol Port Number Registry: {IANA_URL}")
+        ref_run.italic = True
+        ref_run.font.size = Pt(8)
+        ref_run.font.color.rgb = RGBColor(0x6C, 0x75, 0x7D)
+
+    # ---------------------------------------------------------------- generate
     def generate(self, context, results):
         doc = Document()
 
@@ -69,8 +128,10 @@ class Clause192Report(BaseReport):
         self.add_itsar_heading(doc, "5. Test Objective", 2)
         doc.add_paragraph(
             "To identify all open ports on the DUT using TCP SYN, UDP, and SCTP INIT "
-            "scan techniques. The discovered open ports are documented with packet "
-            "capture evidence showing the request and response for each open port."
+            "scan techniques. Each discovered open port is matched against the IANA "
+            "Service Name and Transport Protocol Port Number Registry (RFC-based) to "
+            "determine whether it corresponds to a service commonly required for "
+            "packet transfer. The test FAILS if even one port is not commonly used."
         )
         doc.add_paragraph()
 
@@ -89,7 +150,9 @@ class Clause192Report(BaseReport):
             "Run nmap scan against the DUT for all 65535 ports.",
             "Stop the packet capture after the scan completes.",
             "Parse nmap output to identify open ports.",
+            "Classify each port against the IANA/RFC well-known port registry.",
             "Take Wireshark screenshots for each discovered open port.",
+            "Mark FAIL if any discovered port is not commonly used for packet transfer.",
         ]:
             doc.add_paragraph(f"\u2022 {step}")
         doc.add_paragraph()
@@ -98,8 +161,9 @@ class Clause192Report(BaseReport):
         self.add_itsar_heading(doc, "7. Expected Results", 2)
         doc.add_paragraph(
             "Only documented and necessary service ports should be found open. "
-            "The packet captures should show the SYN/SYN-ACK handshake (TCP), "
-            "response packets (UDP), or INIT/INIT-ACK (SCTP) for each open port."
+            "Every open port must map to a well-known service defined in an RFC or "
+            "IANA standard that is commonly required for packet transfer on a CPE. "
+            "The test FAILS if even one open port does not meet this criterion."
         )
         doc.add_paragraph()
 
@@ -126,6 +190,53 @@ class Clause192Report(BaseReport):
             run.bold = True
             run.font.color.rgb = GREEN if tc.status.upper() == "PASS" else RED
 
+            # ── Port Classification Table ──
+            if hasattr(tc, "sub_results") and tc.sub_results:
+                self._add_port_classification_table(
+                    doc, tc.sub_results, scan_label)
+
+                # Per-port observations
+                non_std = [sr for sr in tc.sub_results if not sr.get("is_common")]
+                std = [sr for sr in tc.sub_results if sr.get("is_common")]
+
+                obs_heading = doc.add_paragraph()
+                obs_run = obs_heading.add_run("Observations:")
+                obs_run.bold = True
+                obs_run.font.size = Pt(10)
+                obs_run.font.color.rgb = PURPLE
+
+                if non_std:
+                    port_list = ", ".join(
+                        f"{sr['port']}/{sr.get('proto','').upper()} "
+                        f"({sr.get('rfc_service','unknown')})"
+                        for sr in non_std
+                    )
+                    obs = doc.add_paragraph()
+                    obs_text = obs.add_run(
+                        f"NON-COMPLIANT: {len(non_std)} port(s) are NOT commonly "
+                        f"used for packet transfer and should not be open on a CPE: "
+                        f"{port_list}. Each port's defining RFC/standard is cited in "
+                        f"the table above. These services represent an expanded "
+                        f"attack surface and must be closed or justified by the "
+                        f"vendor's operational documentation."
+                    )
+                    obs_text.italic = True
+                    obs_text.font.size = Pt(9)
+                    obs_text.font.color.rgb = RGBColor(0x6C, 0x75, 0x7D)
+                if std:
+                    port_list = ", ".join(
+                        f"{sr['port']}/{sr.get('proto','').upper()}"
+                        for sr in std
+                    )
+                    obs2 = doc.add_paragraph()
+                    obs2_text = obs2.add_run(
+                        f"Compliant ports ({len(std)}): {port_list} — these are "
+                        f"well-known services commonly required for CPE operation."
+                    )
+                    obs2_text.italic = True
+                    obs2_text.font.size = Pt(9)
+                    obs2_text.font.color.rgb = RGBColor(0x6C, 0x75, 0x7D)
+
             self.add_grey_horizontal_line(doc)
 
             for evidence in tc.evidence:
@@ -140,17 +251,42 @@ class Clause192Report(BaseReport):
 
         # ── 9. Test Observation ──
         self.add_itsar_heading(doc, "9. Test Observation", 2)
+
+        # Collect all non-standard ports across all test cases
+        all_non_std = []
+        all_std = []
+        for tc in results:
+            for sr in getattr(tc, "sub_results", []):
+                if sr.get("is_common"):
+                    all_std.append(sr)
+                else:
+                    all_non_std.append(sr)
+
         failed = [tc for tc in results if tc.status.upper() != "PASS"]
         if failed:
             names = ", ".join(tc.name for tc in failed)
             doc.add_paragraph(
-                f"The following scan(s) did not complete successfully: {names}. "
-                "Review the evidence to determine if unexpected ports are open."
+                f"The following scan(s) reported non-compliant ports: {names}."
             )
+            if all_non_std:
+                port_detail = "; ".join(
+                    f"Port {sr['port']}/{sr.get('proto','').upper()} — "
+                    f"{sr.get('rfc_service','unknown')} "
+                    f"(Ref: {sr.get('rfc_url', IANA_URL)})"
+                    for sr in all_non_std
+                )
+                doc.add_paragraph(
+                    f"Non-standard open ports discovered: {port_detail}. "
+                    f"These ports are not commonly required for packet transfer "
+                    f"on a CPE and their presence triggers an automatic FAIL verdict."
+                )
         else:
+            total_ports = len(all_std) + len(all_non_std)
             doc.add_paragraph(
-                "All port scanning test cases completed successfully. The open ports "
-                "discovered have been documented with packet capture evidence."
+                f"All port scanning test cases completed successfully. "
+                f"{total_ports} open port(s) were discovered, all of which "
+                f"map to well-known services commonly required for packet "
+                f"transfer per IANA/RFC definitions."
             )
         doc.add_paragraph()
 

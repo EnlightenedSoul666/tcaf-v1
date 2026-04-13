@@ -6,7 +6,7 @@ from steps.command_step import CommandStep
 from steps.screenshot_step import ScreenshotStep
 from steps.wireshark_packet_screenshot_step import WiresharkPacketScreenshotStep
 from steps.analyze_pcap_step import AnalyzePcapStep
-from .nmap_parser import parse_open_ports, parse_pcap_for_responses, merge_port_lists
+from .nmap_parser import parse_open_ports, parse_pcap_for_responses, merge_port_lists, classify_open_ports
 from datetime import datetime
 import os
 import time
@@ -85,11 +85,22 @@ class TC3SCTPScan(TestCase):
         if pcap_ports:
             print(f"[+] PCAP analysis found {len(pcap_ports)} additional/late responses")
         if open_ports:
-            print(f"[+] Total: {len(open_ports)} open SCTP ports. Capturing Wireshark evidence...")
+            print(f"[+] Total: {len(open_ports)} open SCTP ports. Classifying & capturing evidence...")
         else:
             print("[*] No open SCTP ports found (nmap or PCAP).")
             self.status = "PASS"
             return self
+
+        # Classify every port against the IANA/RFC registry
+        open_ports, has_non_standard = classify_open_ports(open_ports)
+
+        if has_non_standard:
+            non_std = [p for p in open_ports if not p["is_common"]]
+            print(f"[!] {len(non_std)} non-standard port(s) found — overall FAIL")
+            for p in non_std:
+                print(f"    Port {p['port']}: {p['rfc_service']} (RFC: {p['rfc_url']})")
+        else:
+            print("[+] All discovered ports are commonly used for packet transfer.")
 
         # ---------------------------------------------------------
         # WIRESHARK PROOF FOR EACH OPEN PORT
@@ -128,5 +139,17 @@ class TC3SCTPScan(TestCase):
             else:
                 print(f"[*] No matching packets for SCTP port {port} in pcap.")
 
-        self.status = "PASS"
+            # Record per-port sub_result for reporting
+            self.sub_results.append({
+                "port": port,
+                "proto": "sctp",
+                "nmap_service": port_info.get("service", ""),
+                "rfc_service": port_info.get("rfc_service", "unknown"),
+                "rfc_url": port_info.get("rfc_url", ""),
+                "is_common": port_info.get("is_common", False),
+                "status": port_info.get("port_status", "FAIL"),
+            })
+
+        # Overall verdict: FAIL if any port is not commonly used
+        self.status = "FAIL" if has_non_standard else "PASS"
         return self

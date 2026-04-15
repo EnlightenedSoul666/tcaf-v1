@@ -152,6 +152,31 @@ def _is_ephemeral(port: int) -> bool:
     return EPHEMERAL_PORT_RANGE[0] <= port <= EPHEMERAL_PORT_RANGE[1]
 
 
+def _discover_tester_ip(pcap_path: str, dut_ip: str, proto: str) -> str | None:
+    """
+    Extract the tester's source IP by examining outgoing probes to the DuT.
+    Looks for the IP that is sending packets TO the DuT.
+    """
+    filt = f"ip.dst == {dut_ip} and {proto}"
+    cmd = (
+        f"tshark -r {pcap_path} -Y '{filt}' "
+        f"-T fields -e ip.src"
+    )
+    try:
+        result = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=30
+        )
+    except Exception:
+        return None
+
+    if result.returncode == 0 and result.stdout.strip():
+        # Get the first (most common) source IP
+        lines = result.stdout.strip().split("\n")
+        if lines and lines[0].strip():
+            return lines[0].strip()
+    return None
+
+
 def _probed_ports(pcap_path: str, dut_ip: str, proto: str) -> set[int]:
     """
     Return the set of destination ports the *tester* actually sent probes to
@@ -188,24 +213,24 @@ def parse_pcap_for_responses(pcap_path, dut_ip, proto="udp"):
 
     Ghost port filtering
     --------------------
-    A naive ``ip.src == dut_ip and udp`` filter will pick up every random UDP
-    packet the DuT emits while the scan runs — DNS queries from dnsmasq, NTP
-    syncs, mDNS/SSDP broadcasts, DHCPv6 solicitations, etc. — and record their
-    ephemeral *source* ports (e.g. 52499) as "open ports". They are not.
+    A naive ``ip.src == dut_ip and udp`` filter will pick up broadcast and
+    multicast traffic from the DuT (DNS to 8.8.8.8, NTP to time servers,
+    DHCP to 255.255.255.255, etc.) while the scan runs, and record their
+    ephemeral *source* ports (e.g. 52499, 61402) as "open ports". They are not.
 
-    Two defences:
+    Three defences:
 
-    1. **Probe set.**  We derive the set of destination ports the *tester*
+    1. **Destination IP check.**  Only accept responses destined FOR the tester
+       (`ip.dst == tester_ip`). This filters out broadcast, multicast, and
+       traffic to other machines on the network.
+
+    2. **Probe set.**  We derive the set of destination ports the *tester*
        sent probes to (`ip.dst == dut_ip and <proto>`), then only accept a
-       response port if it appears in that set.  Background chatter to
-       unrelated destinations is excluded automatically because those packets
-       do not have the DuT as the src AND a tester-probed dst port as the
-       srcport simultaneously.
+       response port if it appears in that set.
 
-    2. **Ephemeral port rejection.**  Any port in the Linux default ephemeral
-       range (32768–60999) that was *not* also probed by the tester is
-       discarded even if it somehow survives step 1.  Legitimate services on
-       a CPE/DuT live in the well-known or registered ranges.
+    3. **Ephemeral port rejection.**  Any port in the IANA ephemeral range
+       (49152–65535) is discarded.  Real services live in well-known or
+       registered ranges, never in ephemeral ranges.
     """
     open_ports = []
     seen_ports = set()
@@ -214,23 +239,36 @@ def parse_pcap_for_responses(pcap_path, dut_ip, proto="udp"):
     if proto_l not in ("tcp", "udp", "sctp"):
         return []
 
-    # Step 1: authoritative "probed" set.
+    # Step 1: Discover the tester IP by examining outgoing probes
+    tester_ip = _discover_tester_ip(pcap_path, dut_ip, proto_l)
+
+    # Step 2: authoritative "probed" set.
     probed = _probed_ports(pcap_path, dut_ip, proto_l)
 
     try:
         if proto_l == "tcp":
-            # TCP: Look for SYN-ACK responses from DuT
-            filter_expr = (
-                f"ip.src == {dut_ip} and tcp.flags.syn == 1 and tcp.flags.ack == 1"
-            )
+            # TCP: Look for SYN-ACK responses from DuT destined for tester
+            if tester_ip:
+                filter_expr = (
+                    f"ip.src == {dut_ip} and ip.dst == {tester_ip} and "
+                    f"tcp.flags.syn == 1 and tcp.flags.ack == 1"
+                )
+            else:
+                filter_expr = (
+                    f"ip.src == {dut_ip} and tcp.flags.syn == 1 and tcp.flags.ack == 1"
+                )
         elif proto_l == "udp":
-            # UDP: any packet from DuT whose srcport is a port we actually
-            # probed.  (We could also add `ip.dst == <tester_ip>` here for a
-            # belt-and-braces check, but the probed-port constraint already
-            # eliminates background noise.)
-            filter_expr = f"ip.src == {dut_ip} and udp"
+            # UDP: packets from DuT destined for the tester (not broadcast/multicast)
+            if tester_ip:
+                filter_expr = f"ip.src == {dut_ip} and ip.dst == {tester_ip} and udp"
+            else:
+                filter_expr = f"ip.src == {dut_ip} and udp"
         else:  # sctp
-            filter_expr = f"ip.src == {dut_ip} and sctp"
+            # SCTP: packets from DuT destined for the tester
+            if tester_ip:
+                filter_expr = f"ip.src == {dut_ip} and ip.dst == {tester_ip} and sctp"
+            else:
+                filter_expr = f"ip.src == {dut_ip} and sctp"
 
         cmd = (
             f"tshark -r {pcap_path} -Y '{filter_expr}' "

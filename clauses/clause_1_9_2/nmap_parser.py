@@ -135,12 +135,17 @@ def parse_open_ports(nmap_output):
     return open_ports
 
 
-# Linux default ephemeral port range (`net.ipv4.ip_local_port_range`).
+# IANA-recommended ephemeral port range (RFC 6056).
 # Source ports the kernel hands out to outbound sockets fall in this range;
 # an "open" service should never live here, so we use it as a filter to drop
 # ghost ports that are really just the DuT's own DNS/NTP/mDNS background
 # traffic leaking into our PCAP analysis.
-EPHEMERAL_PORT_RANGE = (32768, 60999)
+#
+# Range covers:
+#   - Windows/macOS default: 49152-65535
+#   - Linux default: 32768-60999 (subset of IANA range)
+#   - IANA standard: 49152-65535 (RFC 6056)
+EPHEMERAL_PORT_RANGE = (49152, 65535)
 
 
 def _is_ephemeral(port: int) -> bool:

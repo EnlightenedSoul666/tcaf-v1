@@ -135,47 +135,139 @@ def parse_open_ports(nmap_output):
     return open_ports
 
 
+# Linux default ephemeral port range (`net.ipv4.ip_local_port_range`).
+# Source ports the kernel hands out to outbound sockets fall in this range;
+# an "open" service should never live here, so we use it as a filter to drop
+# ghost ports that are really just the DuT's own DNS/NTP/mDNS background
+# traffic leaking into our PCAP analysis.
+EPHEMERAL_PORT_RANGE = (32768, 60999)
+
+
+def _is_ephemeral(port: int) -> bool:
+    return EPHEMERAL_PORT_RANGE[0] <= port <= EPHEMERAL_PORT_RANGE[1]
+
+
+def _probed_ports(pcap_path: str, dut_ip: str, proto: str) -> set[int]:
+    """
+    Return the set of destination ports the *tester* actually sent probes to
+    on the DuT.  This is the authoritative list of ports that could legitimately
+    be "open" — anything not in this set is background noise.
+    """
+    filt = f"ip.dst == {dut_ip} and {proto}"
+    cmd = (
+        f"tshark -r {pcap_path} -Y '{filt}' "
+        f"-T fields -e {proto}.dstport"
+    )
+    try:
+        result = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=30
+        )
+    except Exception:
+        return set()
+
+    probed = set()
+    if result.returncode == 0 and result.stdout.strip():
+        for line in result.stdout.strip().split("\n"):
+            s = line.strip()
+            if s and s.isdigit():
+                probed.add(int(s))
+    return probed
+
+
 def parse_pcap_for_responses(pcap_path, dut_ip, proto="udp"):
     """
-    Parse PCAP file to find responses from DuT.
-    Returns list of dicts: [{"port": 53, "proto": "udp", "state": "open", "service": "unknown"}, ...]
+    Parse PCAP file to find responses from DuT, filtering out "ghost" ports.
 
-    For UDP/SCTP: Look for any response from DuT on a given port.
-    For TCP: Look for SYN-ACK responses.
+    Returns list of dicts:
+        [{"port": 53, "proto": "udp", "state": "open", "service": "..."}, ...]
+
+    Ghost port filtering
+    --------------------
+    A naive ``ip.src == dut_ip and udp`` filter will pick up every random UDP
+    packet the DuT emits while the scan runs — DNS queries from dnsmasq, NTP
+    syncs, mDNS/SSDP broadcasts, DHCPv6 solicitations, etc. — and record their
+    ephemeral *source* ports (e.g. 52499) as "open ports". They are not.
+
+    Two defences:
+
+    1. **Probe set.**  We derive the set of destination ports the *tester*
+       sent probes to (`ip.dst == dut_ip and <proto>`), then only accept a
+       response port if it appears in that set.  Background chatter to
+       unrelated destinations is excluded automatically because those packets
+       do not have the DuT as the src AND a tester-probed dst port as the
+       srcport simultaneously.
+
+    2. **Ephemeral port rejection.**  Any port in the Linux default ephemeral
+       range (32768–60999) that was *not* also probed by the tester is
+       discarded even if it somehow survives step 1.  Legitimate services on
+       a CPE/DuT live in the well-known or registered ranges.
     """
     open_ports = []
     seen_ports = set()
+    proto_l = proto.lower()
+
+    if proto_l not in ("tcp", "udp", "sctp"):
+        return []
+
+    # Step 1: authoritative "probed" set.
+    probed = _probed_ports(pcap_path, dut_ip, proto_l)
 
     try:
-        if proto.lower() == "tcp":
+        if proto_l == "tcp":
             # TCP: Look for SYN-ACK responses from DuT
-            filter_expr = f"ip.src == {dut_ip} and tcp.flags.syn == 1 and tcp.flags.ack == 1"
-        elif proto.lower() == "udp":
-            # UDP: Look for any response from DuT
+            filter_expr = (
+                f"ip.src == {dut_ip} and tcp.flags.syn == 1 and tcp.flags.ack == 1"
+            )
+        elif proto_l == "udp":
+            # UDP: any packet from DuT whose srcport is a port we actually
+            # probed.  (We could also add `ip.dst == <tester_ip>` here for a
+            # belt-and-braces check, but the probed-port constraint already
+            # eliminates background noise.)
             filter_expr = f"ip.src == {dut_ip} and udp"
-        elif proto.lower() == "sctp":
-            # SCTP: Look for INIT-ACK responses from DuT
+        else:  # sctp
             filter_expr = f"ip.src == {dut_ip} and sctp"
-        else:
-            return []
 
-        # Run tshark to extract source ports from responses
-        cmd = f"tshark -r {pcap_path} -Y '{filter_expr}' -T fields -e {proto}.srcport"
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+        cmd = (
+            f"tshark -r {pcap_path} -Y '{filter_expr}' "
+            f"-T fields -e {proto_l}.srcport"
+        )
+        result = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=30
+        )
 
         if result.returncode == 0 and result.stdout.strip():
             for line in result.stdout.strip().split("\n"):
                 port_str = line.strip()
-                if port_str and port_str.isdigit():
-                    port = int(port_str)
-                    if port not in seen_ports:
-                        seen_ports.add(port)
-                        open_ports.append({
-                            "port": port,
-                            "proto": proto.lower(),
-                            "state": "open",
-                            "service": "unknown (from PCAP)",
-                        })
+                if not (port_str and port_str.isdigit()):
+                    continue
+
+                port = int(port_str)
+                if port in seen_ports:
+                    continue
+
+                # --- Ghost-port filters ------------------------------------
+                # (a) Must correspond to something the tester actually probed.
+                if probed and port not in probed:
+                    # No probe was ever sent to this port — it's background
+                    # traffic the DuT emitted (DNS, NTP, mDNS, SSH reply,
+                    # etc.). Drop it.
+                    continue
+
+                # (b) Drop ephemeral source ports unless nmap will later
+                # re-confirm them.  We are conservative: if it's ephemeral
+                # AND wasn't probed, we reject outright.  If it's ephemeral
+                # but WAS probed, we keep it (user explicitly asked for it).
+                if _is_ephemeral(port) and port not in probed:
+                    continue
+                # -----------------------------------------------------------
+
+                seen_ports.add(port)
+                open_ports.append({
+                    "port": port,
+                    "proto": proto_l,
+                    "state": "open",
+                    "service": "unknown (from PCAP)",
+                })
     except Exception as e:
         print(f"[!] Error parsing PCAP: {e}")
 

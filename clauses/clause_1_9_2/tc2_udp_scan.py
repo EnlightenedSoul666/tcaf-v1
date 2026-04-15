@@ -35,8 +35,12 @@ class TC2UDPScan(TestCase):
         # 1. Start PCAP capture
         StepRunner([PcapStartStep(interface="eth0", filename="udp_scan.pcapng")]).run(context)
 
-        # 2. Cache sudo credentials
-        StepRunner([CommandStep("tester", "sudo -v")]).run(context)
+        # 2. Cache sudo credentials (provide password via stdin to avoid tmux prompt)
+        if context.sudo_password:
+            sudo_cmd = f"echo '{context.sudo_password}' | sudo -S -v"
+        else:
+            sudo_cmd = "sudo -v"
+        StepRunner([CommandStep("tester", sudo_cmd)]).run(context)
         time.sleep(3)
 
         # 3. Run nmap UDP scan: SINGLE PROBE PER PORT (no retries)

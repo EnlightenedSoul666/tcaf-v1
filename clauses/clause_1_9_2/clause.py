@@ -8,6 +8,7 @@ class Clause_1_9_2(BaseClause):
 
     REQUIRES_SSH  = False
     REQUIRES_IPV6 = False
+    REQUIRES_SUDO = True
 
     def __init__(self, context):
         super().__init__(context)

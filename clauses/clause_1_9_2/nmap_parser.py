@@ -246,18 +246,19 @@ def parse_pcap_for_responses(pcap_path, dut_ip, proto="udp"):
                     continue
 
                 # --- Ghost-port filters ------------------------------------
-                # (a) Must correspond to something the tester actually probed.
-                if probed and port not in probed:
-                    # No probe was ever sent to this port — it's background
-                    # traffic the DuT emitted (DNS, NTP, mDNS, SSH reply,
-                    # etc.). Drop it.
+                # (a) Drop ephemeral ports entirely.
+                # The ephemeral range (32768–60999) is reserved for the OS kernel
+                # to hand out to outbound client sockets. A real service should
+                # NEVER listen on an ephemeral port; if we see a response from
+                # one, it's the DuT's own background traffic (DNS, NTP, SSH client
+                # connecting elsewhere, etc.), not a listening service.
+                if _is_ephemeral(port):
                     continue
 
-                # (b) Drop ephemeral source ports unless nmap will later
-                # re-confirm them.  We are conservative: if it's ephemeral
-                # AND wasn't probed, we reject outright.  If it's ephemeral
-                # but WAS probed, we keep it (user explicitly asked for it).
-                if _is_ephemeral(port) and port not in probed:
+                # (b) Must correspond to something the tester actually probed.
+                if probed and port not in probed:
+                    # No probe was ever sent to this port — it's background
+                    # traffic the DuT emitted. Drop it.
                     continue
                 # -----------------------------------------------------------
 

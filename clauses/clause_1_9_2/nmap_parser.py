@@ -258,17 +258,20 @@ def parse_pcap_for_responses(pcap_path, dut_ip, proto="udp"):
                     f"ip.src == {dut_ip} and tcp.flags.syn == 1 and tcp.flags.ack == 1"
                 )
         elif proto_l == "udp":
-            # UDP: packets from DuT destined for the tester (not broadcast/multicast)
+            # UDP: packets from DuT destined for the tester (not broadcast/multicast/ICMP)
+            # Exclude ICMP errors which contain encapsulated probes with our ephemeral source ports
             if tester_ip:
-                filter_expr = f"ip.src == {dut_ip} and ip.dst == {tester_ip} and udp"
+                filter_expr = f"ip.src == {dut_ip} and ip.dst == {tester_ip} and udp and not icmp"
             else:
-                filter_expr = f"ip.src == {dut_ip} and udp"
+                filter_expr = f"ip.src == {dut_ip} and udp and not icmp"
         else:  # sctp
-            # SCTP: packets from DuT destined for the tester
+            # SCTP: packets from DuT destined for the tester (not ICMP errors)
+            # CRITICAL: Exclude ICMP errors which encapsulate our original probe with our
+            # ephemeral source port. We only want true SCTP protocol responses.
             if tester_ip:
-                filter_expr = f"ip.src == {dut_ip} and ip.dst == {tester_ip} and sctp"
+                filter_expr = f"ip.src == {dut_ip} and ip.dst == {tester_ip} and sctp and not icmp"
             else:
-                filter_expr = f"ip.src == {dut_ip} and sctp"
+                filter_expr = f"ip.src == {dut_ip} and sctp and not icmp"
 
         cmd = (
             f"tshark -r {pcap_path} -Y '{filter_expr}' "

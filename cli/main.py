@@ -73,6 +73,11 @@ def run(
 
     # ==================================================================
     # Auxiliary machine (Metasploitable — for ICMP Redirect tests)
+    #
+    # IPv6 addresses are auto-discovered via ARP+NDP in the clause's
+    # prepare_context(); no SSH credentials are needed for the auxiliary.
+    # The nonsense IPv6 is also auto-generated from the DuT's ULA prefix
+    # if the user doesn't supply a usable one.
     # ==================================================================
     metasploitable_ip = None
     metasploitable_user = None
@@ -81,11 +86,11 @@ def run(
     nonsense_ipv6 = None
     if has_auxiliary:
         metasploitable_ip = input("Enter auxiliary machine (Metasploitable) IPv4 address: ")
-        metasploitable_user = input("Enter Metasploitable SSH username: ")
-        metasploitable_password = getpass.getpass("Enter Metasploitable SSH password: ")
         nonsense_ip = input("Enter nonsense IPv4 address (unreachable): ")
-        nonsense_ipv6 = input("Enter nonsense IPv6 address (unreachable): ")
-        print("  (IPv6 addresses will be auto-discovered via SSH)")
+        nonsense_ipv6 = input(
+            "Enter nonsense IPv6 address (leave blank to auto-generate in DuT's ULA): "
+        ).strip() or None
+        print("  (IPv6 addresses will be auto-discovered via ARP+NDP)")
 
     engine = Engine(
         clause=clause,

@@ -14,7 +14,56 @@ from steps.command_step import CommandStep
 from steps.screenshot_step import ScreenshotStep
 from steps.wireshark_packet_screenshot_step import WiresharkPacketScreenshotStep
 from steps.analyze_pcap_step import AnalyzePcapStep
+import re
 import time
+
+
+# ---------------------------------------------------------------------------
+#  Traceroute hop extraction
+# ---------------------------------------------------------------------------
+#
+# The Redirect and Process tests decide PASS/FAIL by comparing the hop path
+# to the auxiliary machine before vs. after the stimulus. Previously we did
+# `route_before.strip() != route_after.strip()` on the raw terminal buffer
+# returned by `tmux capture-pane -p`, which ALWAYS differed because:
+#
+#   1. The two captures include different banner lines
+#      ("--- BEFORE Redirect ---" vs "--- AFTER Redirect ---").
+#   2. Per-hop RTTs (e.g. "1.234 ms") vary between runs even when the path
+#      is identical.
+#
+# That made every Redirect test FAIL regardless of the DuT's real behaviour.
+#
+# _extract_hops() pulls just (hop_number, next_hop_ip) pairs from a capture,
+# ignoring banners, RTTs, and whatever other noise tmux dumps into the pane.
+# Comparing these lists is the correct compliance check: identical hop
+# topology means the DuT did not alter its routing in response to the
+# stimulus (PASS); different topology means it did (FAIL).
+# ---------------------------------------------------------------------------
+
+_HOP_RE = re.compile(r"^\s*(\d+)\s+([0-9a-fA-F:.]+)(?:\s|$)")
+
+
+def _extract_hops(capture):
+    """
+    Extract the list of (hop_num, next_hop_ip) pairs from a traceroute
+    terminal capture. Lines that don't look like a hop line (headers,
+    prompts, command echoes, '*' timeouts) are skipped.
+    """
+    if not capture:
+        return []
+    hops = []
+    for line in capture.splitlines():
+        m = _HOP_RE.match(line)
+        if not m:
+            continue
+        ip = m.group(2)
+        # Skip '*' timeouts and obviously-not-an-IP tokens (e.g. hop number
+        # followed by a word because of a failed DNS lookup with -n off).
+        if ip == "*" or not any(c in ip for c in ".:"):
+            continue
+        hops.append((int(m.group(1)), ip))
+    return hops
 
 
 # ===========================================================================
@@ -301,10 +350,16 @@ def _get_ipv6_send_tests(context):
     a specific response from the DuT (OpenWRT router).
     """
     dut_ipv6 = context.dut_ipv6
+    openwrt_ipv6 = context.openwrt_ipv6 or dut_ipv6
     nonsense_ipv6 = context.nonsense_ipv6 or "fd00:dead:beef::99"
     aux_ipv6 = context.auxiliary_ipv6
     # For hop-limit test, route through OpenWRT to a real target
     hlim_target = aux_ipv6 if aux_ipv6 else nonsense_ipv6
+    # For Packet-Too-Big test, packet must *cross* the router (not terminate
+    # at it). We send to the auxiliary machine through OpenWRT; OpenWRT must
+    # forward onto an egress link whose MTU is smaller than the packet size
+    # and (per RFC 8200, no in-flight IPv6 fragmentation) reply with PTB.
+    ptb_target = aux_ipv6 if aux_ipv6 else nonsense_ipv6
 
     tests = [
         {
@@ -341,18 +396,27 @@ def _get_ipv6_send_tests(context):
             "send_cmd": (
                 f"sudo python3 -c \""
                 f"from scapy.all import *; "
-                f"send(IPv6(dst='{dut_ipv6}')/ICMPv6EchoRequest()/Raw(b'A'*2000))"
+                f"send(IPv6(dst='{ptb_target}')/ICMPv6EchoRequest()/Raw(b'A'*8000))"
                 f"\""
             ),
-            "response_filter": f"icmpv6.type == 2 and ipv6.src == {dut_ipv6}",
+            # Accept PTB sourced from the DuT's GUA/ULA *or* its link-local
+            # address -- routers commonly source hop-by-hop ICMPv6 errors
+            # from the link-local address of the egress interface.
+            "response_filter": (
+                f"icmpv6.type == 2 and "
+                f"(ipv6.src == {dut_ipv6} or ipv6.src == {openwrt_ipv6} "
+                f"or ipv6.src[0:1] == fe:80)"
+            ),
             "permitted": True,
             "wait_time": 4,
             "description": (
-                f"ICMPv6 Type 2 - Packet Too Big: We send an oversized IPv6 "
-                f"packet (2000+ bytes) to the DuT at {dut_ipv6}. If the packet "
-                f"exceeds the MTU, the router responds with Packet Too Big, "
-                f"informing us of the maximum allowed size. Per ETSI, sending "
-                f"this type is Permitted."
+                f"ICMPv6 Type 2 - Packet Too Big: We send an 8000-byte IPv6 "
+                f"packet destined for the auxiliary machine at {ptb_target} "
+                f"via the DuT (OpenWRT). Because IPv6 forbids in-flight "
+                f"fragmentation (RFC 8200), OpenWRT cannot split the packet "
+                f"onto its egress link (MTU 1500) and MUST return an ICMPv6 "
+                f"Packet Too Big message to the sender, advertising the link "
+                f"MTU. Per ETSI, sending this type is Permitted."
             ),
         },
         {
@@ -480,7 +544,8 @@ def run_unified_send_tests(context, ip_version):
 
     # -- 2. Start PCAP capture ----------------------------------------------
     pcap_filename = f"icmp_ipv{ip_version}_send.pcapng"
-    StepRunner([PcapStartStep(interface="eth0", filename=pcap_filename)]).run(context)
+    iface = getattr(context, "tester_iface", None) or "eth0"
+    StepRunner([PcapStartStep(interface=iface, filename=pcap_filename)]).run(context)
     time.sleep(1)
 
     # -- 3. Send ALL test packets -------------------------------------------
@@ -640,7 +705,8 @@ def _test_redirect_real(context, ip_version, icmp_type, name, aux_ip, openwrt_ip
 
     # -- 2. Start PCAP -----------------------------------------------------
     pcap_filename = f"icmp_ipv{ip_version}_redirect.pcapng"
-    StepRunner([PcapStartStep(interface="eth0", filename=pcap_filename)]).run(context)
+    iface = getattr(context, "tester_iface", None) or "eth0"
+    StepRunner([PcapStartStep(interface=iface, filename=pcap_filename)]).run(context)
 
     # -- 3. Traceroute BEFORE ----------------------------------------------
     StepRunner([CommandStep("tester", "clear")]).run(context)
@@ -752,12 +818,20 @@ def _test_redirect_real(context, ip_version, icmp_type, name, aux_ip, openwrt_ip
     # configuration based on received ICMP Redirects. We judge compliance by
     # comparing the traceroute BEFORE vs AFTER the Redirect was delivered.
     #
-    #   route unchanged  -> Redirect was ignored     -> PASS (compliant)
-    #   route changed    -> Redirect was accepted    -> FAIL (violation)
+    #   hop topology unchanged -> Redirect was ignored  -> PASS (compliant)
+    #   hop topology changed   -> Redirect was accepted -> FAIL (violation)
+    #
+    # We compare the *extracted hop lists*, not the raw terminal buffers.
+    # See _extract_hops() for why: RTT jitter and different banner lines
+    # make a string comparison of the raw buffers always inequal.
     #
     # Whether a Redirect packet was observed in the PCAP is recorded as
     # supporting evidence, but it is not the pass/fail criterion.
-    route_changed = route_before.strip() != route_after.strip()
+    hops_before = _extract_hops(route_before)
+    hops_after  = _extract_hops(route_after)
+    route_changed = hops_before != hops_after
+    print(f"    [i] hops before: {hops_before}")
+    print(f"    [i] hops after:  {hops_after}")
 
     if route_changed:
         print(f"[FAIL] Traceroute path CHANGED after Redirect (Type {icmp_type}) "
@@ -853,8 +927,12 @@ def _test_process_crafted(context, ip_version, icmp_type, name, aux_ip, openwrt_
         suffix=f"process_after_ipv{ip_version}_type_{icmp_type}"
     )]).run(context)
 
-    # 4. Compare
-    if route_before.strip() == route_after.strip():
+    # 4. Compare extracted hop topology (ignores banner lines + RTT jitter).
+    hops_before = _extract_hops(route_before)
+    hops_after  = _extract_hops(route_after)
+    print(f"    [i] hops before: {hops_before}")
+    print(f"    [i] hops after:  {hops_after}")
+    if hops_before == hops_after:
         print(f"[PASS] DuT config UNCHANGED after Type {icmp_type} ({name})")
         return "PASS"
     else:

@@ -63,6 +63,11 @@ class RuntimeContext:
         self.pcap_process = None
         self.pcap_file = None
 
+        # Tester's network interface (auto-resolved in prepare_context()
+        # via `ip route get <dut_ip>` -> "dev <iface>"). Falls back to eth0
+        # if resolution fails.
+        self.tester_iface = None
+
         self.browser = None
 
         self.dut_model = "Metasploitable 2"

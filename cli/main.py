@@ -75,22 +75,32 @@ def run(
     # Auxiliary machine (Metasploitable — for ICMP Redirect tests)
     #
     # IPv6 addresses are auto-discovered via ARP+NDP in the clause's
-    # prepare_context(); no SSH credentials are needed for the auxiliary.
+    # prepare_context(). The OpenWRT and Metasploitable IPv6 prompts are
+    # OPTIONAL — leave them blank to auto-discover, or enter the ULA
+    # directly if NDP can't find it (e.g. Metasploitable has SLAAC
+    # disabled, or your tester doesn't have a ULA). Manual values win.
     # The nonsense IPv6 is also auto-generated from the DuT's ULA prefix
     # if the user doesn't supply a usable one.
     # ==================================================================
     metasploitable_ip = None
+    metasploitable_ipv6 = None
     metasploitable_user = None
     metasploitable_password = None
     nonsense_ip = None
     nonsense_ipv6 = None
     if has_auxiliary:
         metasploitable_ip = input("Enter auxiliary machine (Metasploitable) IPv4 address: ")
+        openwrt_ipv6 = input(
+            "Enter OpenWRT IPv6 ULA [blank = auto-discover via NDP]: "
+        ).strip() or None
+        metasploitable_ipv6 = input(
+            "Enter Metasploitable IPv6 ULA [blank = auto-discover via NDP]: "
+        ).strip() or None
         nonsense_ip = input("Enter nonsense IPv4 address (unreachable): ")
         nonsense_ipv6 = input(
-            "Enter nonsense IPv6 address (leave blank to auto-generate in DuT's ULA): "
+            "Enter nonsense IPv6 address [blank = auto-generate in DuT's ULA]: "
         ).strip() or None
-        print("  (IPv6 addresses will be auto-discovered via ARP+NDP)")
+        print("  (Any blank IPv6 address will be auto-discovered/generated)")
 
     engine = Engine(
         clause=clause,
@@ -104,6 +114,7 @@ def run(
         openwrt_ipv6=openwrt_ipv6,
         openwrt_password=openwrt_password,
         metasploitable_ip=metasploitable_ip,
+        metasploitable_ipv6=metasploitable_ipv6,
         metasploitable_user=metasploitable_user,
         metasploitable_password=metasploitable_password,
         nonsense_ip=nonsense_ip,

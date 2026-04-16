@@ -9,6 +9,7 @@ all-nodes multicast ping, then matches MAC -> IPv6 in `ip -6 neigh show`.
 This avoids SSH key-exchange/cipher negotiation pain and keeps the PCAP
 free of SSH traffic that would otherwise contaminate the capture window.
 """
+import ipaddress
 import re
 import secrets
 import subprocess
@@ -16,6 +17,16 @@ import subprocess
 from core.clause import BaseClause
 from clauses.clause_1_10_2.tc1_icmp import TC1ICMPIPv4
 from clauses.clause_1_10_2.tc2_icmp import TC2ICMPIPv6
+
+
+def _valid_ipv6(addr):
+    """Return normalised string form if `addr` parses as a valid IPv6, else None."""
+    if not addr:
+        return None
+    try:
+        return str(ipaddress.IPv6Address(addr.split("%")[0]))
+    except (ipaddress.AddressValueError, ValueError):
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +191,17 @@ def _discover_ipv6_via_ndp(ipv4, iface, is_dut=False):
             return gw
 
     # (3) Construct candidates from prefix + EUI-64 (and router '::1' for DuT).
+    #
+    # The tester's SLAAC address gives us 4 hextets of prefix
+    # (e.g. 'fdd4:48ab:15e6:0'). We combine with:
+    #   - '::1' for the DuT (OpenWRT's typical LAN gateway convention).
+    #     '{prefix}::1' is valid because '::' expands to 3 zero groups
+    #     (4 + 1 = 5 hextets + 3 zeros = 8).
+    #   - EUI-64(target_MAC) for the auxiliary, joined with a SINGLE colon.
+    #     '{prefix}:{eui}' gives 4 + 4 = 8 hextets, no '::' needed.
+    #     Using '::' here would be invalid (0 zero groups is illegal).
+    # Every candidate is validated through ipaddress.IPv6Address before
+    # we bother pinging it.
     prefix = _tester_ula_prefix(iface)
     if prefix:
         candidates = []
@@ -187,9 +209,10 @@ def _discover_ipv6_via_ndp(ipv4, iface, is_dut=False):
             candidates.append(f"{prefix}::1")  # typical OpenWRT LAN gateway
         eui = _mac_to_eui64(mac)
         if eui:
-            candidates.append(f"{prefix}::{eui}")
-        for c in candidates:
-            if _ping6_reachable(c, iface):
+            candidates.append(f"{prefix}:{eui}")  # SLAAC EUI-64 address
+        for raw in candidates:
+            c = _valid_ipv6(raw)
+            if c and _ping6_reachable(c, iface):
                 return c
 
     # (4) NDP cache scan — anything global-scope matching this MAC.
@@ -327,11 +350,25 @@ class Clause_1_10_2(BaseClause):
 
         ctx.auxiliary_ip = getattr(ctx, "metasploitable_ip", None)
 
-        # ── 3. Auto-discover IPv6 via ARP+NDP (no SSH) ───────────────────────
-        print("\n[*] Auto-discovering IPv6 addresses via ARP+NDP...")
+        # ── 3. IPv6 discovery: manual override first, else ARP+NDP ──────────
+        #
+        # If the operator supplied `openwrt_ipv6` or `metasploitable_ipv6`
+        # on the CLI, trust them verbatim and skip NDP discovery for that
+        # target. This is the escape hatch for environments where:
+        #   - The tester doesn't have a ULA (no RA received / accept_ra=0)
+        #   - Metasploitable doesn't use SLAAC EUI-64
+        #   - The target responds to ping but at a non-standard address
+        # Manual values are validated through ipaddress.IPv6Address; invalid
+        # input is discarded (and NDP is attempted as usual).
+        print("\n[*] Resolving IPv6 addresses (manual override > ARP+NDP)...")
 
         # OpenWRT / DuT
-        if ctx.openwrt_ip:
+        manual = _valid_ipv6(getattr(ctx, "openwrt_ipv6", None))
+        if manual:
+            ctx.openwrt_ipv6 = manual
+            ctx.dut_ipv6 = manual
+            print(f"    OpenWRT / DuT  (manual):  {manual}")
+        elif ctx.openwrt_ip:
             ipv6 = _discover_ipv6_via_ndp(
                 ctx.openwrt_ip, ctx.tester_iface, is_dut=True
             )
@@ -343,20 +380,21 @@ class Clause_1_10_2(BaseClause):
                 print(f"    OpenWRT / DuT ({ctx.openwrt_ip}):  [not found via NDP]")
 
         # Metasploitable / auxiliary
-        meta_ip = getattr(ctx, "metasploitable_ip", None)
-        if meta_ip:
-            ipv6 = _discover_ipv6_via_ndp(
-                meta_ip, ctx.tester_iface, is_dut=False
-            )
-            if ipv6:
-                ctx.auxiliary_ipv6 = ipv6
-                print(f"    Metasploitable ({meta_ip}):  {ipv6}")
-            else:
-                print(f"    Metasploitable ({meta_ip}):  [not found via NDP]")
-
-        # Fall back to manually-supplied metasploitable_ipv6 if NDP failed.
-        if not getattr(ctx, "auxiliary_ipv6", None):
-            ctx.auxiliary_ipv6 = getattr(ctx, "metasploitable_ipv6", None)
+        manual = _valid_ipv6(getattr(ctx, "metasploitable_ipv6", None))
+        if manual:
+            ctx.auxiliary_ipv6 = manual
+            print(f"    Metasploitable (manual):  {manual}")
+        else:
+            meta_ip = getattr(ctx, "metasploitable_ip", None)
+            if meta_ip:
+                ipv6 = _discover_ipv6_via_ndp(
+                    meta_ip, ctx.tester_iface, is_dut=False
+                )
+                if ipv6:
+                    ctx.auxiliary_ipv6 = ipv6
+                    print(f"    Metasploitable ({meta_ip}):  {ipv6}")
+                else:
+                    print(f"    Metasploitable ({meta_ip}):  [not found via NDP]")
 
         # ── 4. Nonsense IPv6: reject reserved junk, generate random ULA ─────
         if _is_reserved_or_empty_ipv6(getattr(ctx, "nonsense_ipv6", None)):

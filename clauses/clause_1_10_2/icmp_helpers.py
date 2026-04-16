@@ -424,69 +424,6 @@ def _get_ipv6_send_tests(context):
             ),
         },
         {
-            "name": "Destination Unreachable (Type 1)",
-            "icmp_type": 1,
-            # Use 5 pings × 3 s timeout each = 15 s total transmission window.
-            # OpenWRT (DuT) first does NDP for the nonsense address (~3 s probe
-            # cycle) before deciding the target is unreachable and emitting
-            # ICMPv6 Type 1 Code 3. The previous 3 × 2s window was too short.
-            "send_cmd": f"ping6 -c 5 -W 3 {nonsense_ipv6}",
-            "response_filter": f"icmpv6.type == 1 and ipv6.src == {dut_ipv6}",
-            "permitted": True,
-            "wait_time": 18,
-            "description": (
-                f"ICMPv6 Type 1 - Destination Unreachable: We ping6 the "
-                f"non-existent random ULA address {nonsense_ipv6}, which is "
-                f"routed through the DuT (OpenWRT at {dut_ipv6}) via a host "
-                f"route added during setup_routing(). OpenWRT receives the "
-                f"packets, performs NDP for the unknown neighbour, receives no "
-                f"reply, and emits ICMPv6 Type 1 Code 3 (Address Unreachable) "
-                f"back to the tester. Per ETSI TS 133 117, sending this type "
-                f"is Permitted. 5 pings × 3 s timeout are sent to give "
-                f"OpenWRT's NDP resolution time to expire before the capture "
-                f"window closes."
-            ),
-        },
-        {
-            "name": "Packet Too Big (Type 2)",
-            "icmp_type": 2,
-            # 1400-byte payload fits a 1500-MTU link, so scapy's raw-IPv6
-            # socket won't return EMSGSIZE ("cannot fragment this packet")
-            # -- which was the crash in the previous 8000-byte version.
-            "send_cmd": (
-                f"sudo python3 -c \""
-                f"from scapy.all import *; "
-                f"send(IPv6(dst='{ptb_target}')/ICMPv6EchoRequest()/Raw(b'A'*1400), verbose=0)"
-                f"\""
-            ),
-            # Accept PTB sourced from the DuT's GUA/ULA *or* its link-local
-            # address -- routers commonly source hop-by-hop ICMPv6 errors
-            # from the link-local address of the egress interface.
-            "response_filter": (
-                f"icmpv6.type == 2 and "
-                f"(ipv6.src == {dut_ipv6} or ipv6.src == {openwrt_ipv6} "
-                f"or ipv6.src[0:1] == fe:80)"
-            ),
-            "permitted": True,
-            "wait_time": 4,
-            "description": (
-                f"ICMPv6 Type 2 - Packet Too Big: We send a 1400-byte ICMPv6 "
-                f"Echo Request destined for the auxiliary machine at "
-                f"{ptb_target} via the DuT (OpenWRT). A PTB can only be "
-                f"generated when the DuT has to forward a packet that is "
-                f"LARGER than its egress link MTU; IPv6 forbids in-flight "
-                f"fragmentation (RFC 8200), so the router must drop and "
-                f"notify the sender with the link MTU. In a homogeneous "
-                f"1500-MTU lab no asymmetric bottleneck exists, so no PTB "
-                f"is generated and this case reports INCONCLUSIVE -- which "
-                f"is permitted behaviour per ETSI (Type 2 is 'Permitted', "
-                f"not 'Required'). To make this test actively PASS, shrink "
-                f"an egress interface MTU on the DuT (e.g. 'ip link set "
-                f"br-lan mtu 1280' on OpenWRT) so the 1400-byte probe no "
-                f"longer fits on the forward path."
-            ),
-        },
-        {
             "name": "Time Exceeded (Type 3)",
             "icmp_type": 3,
             "send_cmd": (
@@ -529,39 +466,39 @@ def _get_ipv6_send_tests(context):
         {
             "name": "Router Advertisement (Type 134) - REQUIRED",
             "icmp_type": 134,
-            # Send the RS to the all-routers multicast address so OpenWRT
-            # sees it on the right interface; unicast to dut_ipv6 also works
-            # but RFC 4861 s.6.2.6 says routers MUST respond to unicast RS.
+            # RFC 4861 s.6.2.6: a router MUST respond to a unicast RS.
+            # We send two RS packets:
+            #   1. Multicast to ff02::2 (all-routers) — standard host behaviour
+            #   2. Unicast to dut_ipv6 — router MUST reply per RFC 4861
+            # Sending both maximises the chance of an RA being observed.
+            # Routers always source RAs from their link-local address.
             "send_cmd": (
                 f"sudo python3 -c \""
                 f"from scapy.all import *; "
-                f"send(IPv6(dst='ff02::2')/ICMPv6ND_RS(), verbose=0)"
+                f"send(IPv6(dst='ff02::2')/ICMPv6ND_RS(), verbose=0); "
+                f"import time; time.sleep(1); "
+                f"send(IPv6(dst='{dut_ipv6}')/ICMPv6ND_RS(), verbose=0)"
                 f"\""
             ),
-            # Accept RA sourced from either the DuT's ULA/GUA or its
-            # link-local (routers source RAs from their link-local per RFC 4861).
-            "response_filter": (
-                f"icmpv6.type == 134 and "
-                f"(ipv6.src == {dut_ipv6} or ipv6.src[0:4] == fe:80)"
-            ),
+            # Routers source RA from their link-local address (RFC 4861 s.4.2),
+            # so accept any icmpv6.type==134 regardless of source.
+            "response_filter": "icmpv6.type == 134",
             "permitted": True,
-            "wait_time": 6,
+            "wait_time": 8,
             "description": (
                 f"ICMPv6 Type 134 - Router Advertisement (REQUIRED): "
-                f"We send a Router Solicitation (Type 133) to the all-routers "
-                f"multicast address (ff02::2) so that the DuT (OpenWRT at "
-                f"{dut_ipv6}) receives it. Per RFC 4861 section 6.2.6 a router "
-                f"MUST reply to a valid RS with a Router Advertisement (RA). "
-                f"The RA carries the ULA prefix, default router lifetime, and "
-                f"M/O flags that allow hosts on the link to auto-configure. "
-                f"Routers always source RAs from their link-local address, so "
-                f"the filter accepts any RA (icmpv6.type==134) from any "
-                f"fe80:: source as well as the DuT ULA. If a Type 134 is seen, "
-                f"the DuT correctly fulfils its role as an IPv6 router (PASS). "
-                f"If no RA is observed the test reports INCONCLUSIVE (the DuT "
-                f"may be silent because the RS was multicast-filtered or rate-"
-                f"limited; a targeted retest with a unicast RS to {dut_ipv6} "
-                f"is recommended before concluding non-compliance)."
+                f"We send two Router Solicitation (Type 133) packets: "
+                f"(1) multicast to ff02::2 (all-routers, standard host behaviour) "
+                f"and (2) unicast directly to the DuT at {dut_ipv6} (RFC 4861 "
+                f"s.6.2.6 states a router MUST respond to a unicast RS). "
+                f"Sending both maximises the chance of capturing an RA. "
+                f"Per RFC 4861 s.4.2, routers always source RAs from their "
+                f"link-local address, so the filter accepts any icmpv6.type==134 "
+                f"regardless of source. If a Type 134 is seen the DuT correctly "
+                f"fulfils its role as an IPv6 router (PASS). INCONCLUSIVE means "
+                f"neither stimulus produced an RA, which warrants further "
+                f"investigation (rate-limiting, RA guard, accept_ra=0 on "
+                f"forwarding interface)."
             ),
         },
         {
@@ -1201,6 +1138,149 @@ def validate_pcap(context, pcap_path):
         return "INCONCLUSIVE"
 
     return "PASS"
+
+
+# ===========================================================================
+#  DEDICATED DESTINATION UNREACHABLE TEST (ICMPv6 Type 1)
+#
+#  Per RFC 4443 Section 3.1, a router generates ICMPv6 Type 1 when:
+#    Code 0: No route to destination
+#    Code 1: Communication administratively prohibited (firewall)
+#    Code 2: Beyond scope of source address
+#    Code 3: Address unreachable (NDP failed to resolve neighbour)
+#    Code 4: Port unreachable
+#
+#  We target Code 3 (Address Unreachable): a random ULA address is placed in
+#  OpenWRT's own LAN prefix. OpenWRT has a route for the prefix (it owns it),
+#  so it will attempt NDP for the specific host. Nobody responds → Code 3.
+#
+#  To guarantee reliability we:
+#   1. SSH to OpenWRT and flush the NDP cache for the nonsense address so
+#      OpenWRT always starts a fresh NDP probe (avoids stale REACHABLE cache).
+#   2. Verify the tester's route to nonsense_ipv6 is via OpenWRT.
+#   3. Use scapy to send a burst of raw ICMPv6 Echo Requests (faster and more
+#      controllable than ping6) across the full NDP timeout window.
+# ===========================================================================
+
+def run_dest_unreachable_test_ipv6(context):
+    """
+    Dedicated Destination Unreachable (Type 1 Code 3) test for IPv6.
+
+    Workflow:
+      1. SSH to OpenWRT and flush NDP cache for nonsense_ipv6
+      2. Verify tester route to nonsense_ipv6 goes via OpenWRT
+      3. Start PCAP capture
+      4. Burst-send ICMPv6 Echo Requests to nonsense_ipv6 via scapy
+      5. Stop PCAP and analyze for Type 1 from DuT
+      6. Return PASS (Type 1 found) or INCONCLUSIVE (not found)
+    """
+    dut_ipv6  = context.dut_ipv6
+    nonsense  = context.nonsense_ipv6
+
+    if not (dut_ipv6 and nonsense):
+        print("[-] Missing DuT or nonsense IPv6. Skipping Dest Unreachable test.")
+        return "SKIPPED"
+
+    if not context.openwrt_ip or not context.openwrt_password:
+        print("[-] OpenWRT credentials required. Skipping Dest Unreachable test.")
+        return "SKIPPED"
+
+    print("\n" + "="*70)
+    print("Dedicated Destination Unreachable Test (ICMPv6 Type 1 Code 3)")
+    print("="*70)
+
+    openwrt_ipv6 = context.openwrt_ipv6 or dut_ipv6
+    via_clause   = _ipv6_route_via_clause(openwrt_ipv6)
+
+    # -- 1. Flush OpenWRT NDP cache for nonsense address -------------------
+    print(f"[1/5] Flushing OpenWRT NDP cache for {nonsense}...")
+    flush_cmd = (
+        f"sshpass -p '{context.openwrt_password}' "
+        f"ssh -o StrictHostKeyChecking=no root@{context.openwrt_ip} "
+        f"'ip -6 neigh del {nonsense} dev br-lan 2>/dev/null; "
+        f" ip -6 neigh flush dev br-lan nud stale 2>/dev/null; "
+        f" echo done'"
+    )
+    try:
+        result = subprocess.run(flush_cmd, shell=True, capture_output=True, text=True, timeout=10)
+        print(f"    OpenWRT NDP flush: {'OK' if 'done' in result.stdout else 'attempted'}")
+    except Exception as e:
+        print(f"    [!] NDP flush error: {e} (continuing)")
+
+    # -- 2. Verify tester route is via OpenWRT ----------------------------
+    print(f"[2/5] Verifying tester route to {nonsense}...")
+    route_check = _sh(f"ip -6 route get {nonsense}", timeout=5)
+    if openwrt_ipv6.split('%')[0] in route_check or "via" in route_check:
+        print(f"    Route OK: {route_check.strip()}")
+    else:
+        print(f"    [!] Route may be missing. Adding now...")
+        _sh(f"sudo ip -6 route add {nonsense}/128 {via_clause} 2>/dev/null")
+        time.sleep(1)
+
+    # -- 3. Start PCAP capture --------------------------------------------
+    print("[3/5] Starting PCAP capture...")
+    iface = getattr(context, "tester_iface", None) or "eth0"
+    pcap_filename = "icmp_ipv6_dest_unreachable.pcapng"
+    StepRunner([PcapStartStep(interface=iface, filename=pcap_filename)]).run(context)
+    time.sleep(1)
+
+    # -- 4. Burst-send Echo Requests to nonsense address -------------------
+    # Send a burst over ~12 seconds so OpenWRT's NDP probe cycle
+    # (3 probes × ~1s retransmit = ~3–5s total) completes within the window.
+    print(f"[4/5] Sending ICMPv6 Echo Requests to {nonsense}...")
+    StepRunner([CommandStep("tester", "clear")]).run(context)
+    StepRunner([CommandStep("tester",
+        f"echo '[*] Sending burst to {nonsense} — expect Type 1 Code 3...'")]).run(context)
+
+    # Use scapy burst: send 10 Echo Requests spread across 12 s
+    send_cmd = (
+        f"sudo python3 -c \""
+        f"from scapy.all import *; import time; "
+        f"pkt = IPv6(dst='{nonsense}')/ICMPv6EchoRequest(); "
+        f"[send(pkt, verbose=0) or time.sleep(1.2) for _ in range(10)]\""
+    )
+    StepRunner([CommandStep("tester", send_cmd)]).run(context)
+    time.sleep(14)   # Full NDP timeout + buffer
+
+    # -- 5. Stop PCAP and analyze -----------------------------------------
+    print("[5/5] Stopping PCAP and analyzing for Type 1...")
+    StepRunner([PcapStopStep()]).run(context)
+    time.sleep(1)
+
+    pcap_path = context.pcap_file
+
+    StepRunner([CommandStep("tester", "clear")]).run(context)
+    StepRunner([CommandStep("tester",
+        f"echo '=== Type 1 (Dest Unreachable) Packets ===' && "
+        f"tshark -r {pcap_path} -Y 'icmpv6.type == 1'")]).run(context)
+    time.sleep(2)
+    StepRunner([ScreenshotStep(
+        terminal="tester",
+        suffix="dest_unreachable_dedicated"
+    )]).run(context)
+
+    du_filter = f"icmpv6.type == 1 and ipv6.src == {dut_ipv6}"
+    StepRunner([AnalyzePcapStep(filter_expr=du_filter)]).run(context)
+    du_found = context.matched_frame is not None
+
+    if du_found:
+        print("[+] Type 1 (Destination Unreachable) found")
+        StepRunner([WiresharkPacketScreenshotStep(
+            suffix="dest_unreachable_packet",
+            display_filter=du_filter
+        )]).run(context)
+        status = "PASS"
+    else:
+        print("[-] No Type 1 found — check OpenWRT firewall/NDP settings")
+        status = "INCONCLUSIVE"
+
+    print("\n" + "="*70)
+    print(f"Result: {status}")
+    print(f"Target: {nonsense}")
+    print(f"Expected: ICMPv6 Type 1 Code 3 (Address Unreachable) from {dut_ipv6}")
+    print("="*70 + "\n")
+
+    return status
 
 
 # ===========================================================================

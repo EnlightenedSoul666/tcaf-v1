@@ -3,6 +3,7 @@ from clauses.clause_1_10_2.icmp_helpers import (
     run_unified_send_tests,
     check_not_permitted_process,
     setup_routing, teardown_routing,
+    run_dest_unreachable_test_ipv6,
     run_ptb_test_ipv6,
 )
 
@@ -49,6 +50,30 @@ class TC2ICMPIPv6(TestCase):
         #   4. Restoring original MTU
         # Per RFC 8200: PTB is generated when packet size > outgoing MTU.
         # ===================================================================
+        # ===================================================================
+        # DEDICATED DESTINATION UNREACHABLE TEST
+        # RFC 4443 s.3.1 Code 3: OpenWRT NDP fails for nonsense_ipv6
+        # ===================================================================
+        print("\n[=== DEDICATED DEST UNREACHABLE TEST (IPv6 Type 1) ===]")
+        du_status = run_dest_unreachable_test_ipv6(context)
+        context.current_testcase.sub_results.append({
+            "test_type": "Send",
+            "icmp_type": 1,
+            "icmp_name": "Destination Unreachable Code 3 (Dedicated NDP-flush Test)",
+            "ip_version": 6,
+            "status": du_status,
+            "category": "Permitted",
+            "description": (
+                f"ICMPv6 Type 1 Code 3 — Dedicated Test: OpenWRT's NDP cache "
+                f"for {context.nonsense_ipv6} is flushed via SSH before the test "
+                f"to guarantee a fresh NDP probe cycle. A scapy burst of 10 "
+                f"ICMPv6 Echo Requests is sent to {context.nonsense_ipv6} over "
+                f"12 seconds. OpenWRT probes the address 3 times (~1s each), "
+                f"receives no reply, and emits Type 1 Code 3 (Address Unreachable). "
+                f"Per RFC 4443 s.3.1. Result: {du_status}."
+            ),
+        })
+
         print("\n[=== DEDICATED PTB TEST (IPv6 Type 2) ===]")
         ptb_status = run_ptb_test_ipv6(context)
         # PTB is Optional per ETSI (Type 2 Permitted, not Required),

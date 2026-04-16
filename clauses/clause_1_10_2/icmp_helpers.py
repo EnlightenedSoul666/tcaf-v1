@@ -58,22 +58,21 @@ def _ipv6_route_via_clause(ipv6_addr):
 # ---------------------------------------------------------------------------
 #
 # The Redirect and Process tests decide PASS/FAIL by comparing the hop path
-# to the auxiliary machine before vs. after the stimulus. Previously we did
-# `route_before.strip() != route_after.strip()` on the raw terminal buffer
-# returned by `tmux capture-pane -p`, which ALWAYS differed because:
+# to the auxiliary machine before vs. after the stimulus.
 #
-#   1. The two captures include different banner lines
-#      ("--- BEFORE Redirect ---" vs "--- AFTER Redirect ---").
-#   2. Per-hop RTTs (e.g. "1.234 ms") vary between runs even when the path
-#      is identical.
+# KEY INSIGHT: Hop *numbers* can change between BEFORE and AFTER if timeout
+# lines (* * *) appear/disappear, even though the actual routing path is identical.
 #
-# That made every Redirect test FAIL regardless of the DuT's real behaviour.
+# Example:
+#   BEFORE: 1 OpenWRT, 2 timeout, 3 Metasploitable
+#   AFTER:  1 OpenWRT, 2 Metasploitable
 #
-# _extract_hops() pulls just (hop_number, next_hop_ip) pairs from a capture,
-# ignoring banners, RTTs, and whatever other noise tmux dumps into the pane.
-# Comparing these lists is the correct compliance check: identical hop
-# topology means the DuT did not alter its routing in response to the
-# stimulus (PASS); different topology means it did (FAIL).
+# If we compare hop numbers, these look different (3 vs 2). But the actual
+# path is the same: OpenWRT → Metasploitable.
+#
+# SOLUTION: Extract only the IP addresses in order (ignoring hop numbers
+# and timeouts), and compare those. Identical IP sequence = PASS (DuT did
+# not change routing). Different IP sequence = FAIL (DuT accepted redirect).
 # ---------------------------------------------------------------------------
 
 _HOP_RE = re.compile(r"^\s*(\d+)\s+([0-9a-fA-F:.]+)(?:\s|$)")
@@ -81,13 +80,18 @@ _HOP_RE = re.compile(r"^\s*(\d+)\s+([0-9a-fA-F:.]+)(?:\s|$)")
 
 def _extract_hops(capture):
     """
-    Extract the list of (hop_num, next_hop_ip) pairs from a traceroute
-    terminal capture. Lines that don't look like a hop line (headers,
-    prompts, command echoes, '*' timeouts) are skipped.
+    Extract the sequence of next-hop IP addresses from traceroute output,
+    ignoring hop numbers and timeouts.
+
+    Returns a list of IP strings in order, e.g. ['10.0.0.1', '192.168.1.100'].
+    Skips timeout lines (hop marked as '*') and non-IP junk.
+
+    This comparison is hop-number-agnostic: if line 2 times out in BEFORE
+    but responds in AFTER, the extracted IP sequences still match.
     """
     if not capture:
         return []
-    hops = []
+    ips = []
     for line in capture.splitlines():
         m = _HOP_RE.match(line)
         if not m:
@@ -97,8 +101,8 @@ def _extract_hops(capture):
         # followed by a word because of a failed DNS lookup with -n off).
         if ip == "*" or not any(c in ip for c in ".:"):
             continue
-        hops.append((int(m.group(1)), ip))
-    return hops
+        ips.append(ip)
+    return ips
 
 
 # ===========================================================================

@@ -31,6 +31,29 @@ def _sh(cmd, timeout=10):
 
 
 # ---------------------------------------------------------------------------
+#  Route command helper (handles link-local %zone syntax)
+# ---------------------------------------------------------------------------
+
+def _ipv6_route_via_clause(ipv6_addr):
+    """
+    Convert an IPv6 address (possibly with %zone) into a 'via ... dev ...'
+    clause suitable for `ip -6 route add`.
+
+    Examples:
+      'fdd4:48ab:15e6::1'      -> 'via fdd4:48ab:15e6::1'
+      'fe80::1%eth0'           -> 'via fe80::1 dev eth0'
+      'fe80::1%wlan0'          -> 'via fe80::1 dev wlan0'
+    """
+    if not ipv6_addr:
+        return None
+    if '%' not in ipv6_addr:
+        return f"via {ipv6_addr}"
+    # Split 'fe80::1%eth0' into address and interface
+    addr, iface = ipv6_addr.split('%', 1)
+    return f"via {addr} dev {iface}"
+
+
+# ---------------------------------------------------------------------------
 #  Traceroute hop extraction
 # ---------------------------------------------------------------------------
 #
@@ -164,17 +187,22 @@ def setup_routing(context, ip_version):
             print("[-] No OpenWRT IPv6 address. Cannot setup IPv6 routing.")
             return
 
+        via_clause = _ipv6_route_via_clause(openwrt_ipv6)
+        if not via_clause:
+            print("[-] Could not construct valid via clause for IPv6 route.")
+            return
+
         nonsense_ipv6 = context.nonsense_ipv6
         if nonsense_ipv6:
-            cmd = f"sudo ip -6 route add {nonsense_ipv6}/128 via {openwrt_ipv6}"
-            print(f"[*] Adding IPv6 route: {nonsense_ipv6} via {openwrt_ipv6}")
+            cmd = f"sudo ip -6 route add {nonsense_ipv6}/128 {via_clause}"
+            print(f"[*] Adding IPv6 route: {nonsense_ipv6} {via_clause}")
             StepRunner([CommandStep("tester", cmd)]).run(context)
             time.sleep(1)
 
         meta_ipv6 = context.auxiliary_ipv6
         if meta_ipv6:
-            cmd = f"sudo ip -6 route add {meta_ipv6}/128 via {openwrt_ipv6}"
-            print(f"[*] Adding IPv6 route: {meta_ipv6} via {openwrt_ipv6}")
+            cmd = f"sudo ip -6 route add {meta_ipv6}/128 {via_clause}"
+            print(f"[*] Adding IPv6 route: {meta_ipv6} {via_clause}")
             StepRunner([CommandStep("tester", cmd)]).run(context)
             time.sleep(1)
 
@@ -225,14 +253,17 @@ def teardown_routing(context, ip_version):
     else:
         if not openwrt_ipv6:
             return
+        via_clause = _ipv6_route_via_clause(openwrt_ipv6)
+        if not via_clause:
+            return
         nonsense_ipv6 = context.nonsense_ipv6
         if nonsense_ipv6:
-            cmd = f"sudo ip -6 route del {nonsense_ipv6}/128 via {openwrt_ipv6} 2>/dev/null"
+            cmd = f"sudo ip -6 route del {nonsense_ipv6}/128 {via_clause} 2>/dev/null"
             StepRunner([CommandStep("tester", cmd)]).run(context)
 
         meta_ipv6 = context.auxiliary_ipv6
         if meta_ipv6:
-            cmd = f"sudo ip -6 route del {meta_ipv6}/128 via {openwrt_ipv6} 2>/dev/null"
+            cmd = f"sudo ip -6 route del {meta_ipv6}/128 {via_clause} 2>/dev/null"
             StepRunner([CommandStep("tester", cmd)]).run(context)
 
     # Flush any redirect cache entries

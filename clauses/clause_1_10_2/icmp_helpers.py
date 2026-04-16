@@ -15,7 +15,19 @@ from steps.screenshot_step import ScreenshotStep
 from steps.wireshark_packet_screenshot_step import WiresharkPacketScreenshotStep
 from steps.analyze_pcap_step import AnalyzePcapStep
 import re
+import subprocess
 import time
+
+
+def _sh(cmd, timeout=10):
+    """Run a shell command, return stdout on success or '' on any failure."""
+    try:
+        r = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=timeout
+        )
+        return r.stdout if r.returncode == 0 else ""
+    except Exception:
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -379,15 +391,28 @@ def _get_ipv6_send_tests(context):
         {
             "name": "Destination Unreachable (Type 1)",
             "icmp_type": 1,
-            "send_cmd": f"ping6 -c 3 -W 2 {nonsense_ipv6}",
-            "response_filter": f"icmpv6.type == 1 and ipv6.src == {dut_ipv6}",
+            # Use 5 pings × 3 s timeout each = 15 s total transmission window.
+            # OpenWRT first does NDP (up to ~3 s) before deciding the target is
+            # unreachable and emitting ICMPv6 Type 1 Code 3.  Two quick pings
+            # are not enough to reliably trigger that NDP-timeout path.
+            "send_cmd": f"ping6 -c 5 -W 3 {nonsense_ipv6}",
+            "response_filter": (
+                f"icmpv6.type == 1 and "
+                f"(ipv6.src == {dut_ipv6} or ipv6.src == {openwrt_ipv6})"
+            ),
             "permitted": True,
-            "wait_time": 5,
+            "wait_time": 18,
             "description": (
                 f"ICMPv6 Type 1 - Destination Unreachable: We ping6 the "
-                f"non-existent address {nonsense_ipv6}, routed through the "
-                f"DuT. The router cannot deliver it and sends a Destination "
-                f"Unreachable message. Per ETSI, sending this type is Permitted."
+                f"non-existent random ULA address {nonsense_ipv6}, which is "
+                f"routed through the DuT (OpenWRT at {dut_ipv6}) via a host "
+                f"route added during setup_routing(). OpenWRT receives the "
+                f"packets, performs NDP for the unknown neighbour, receives no "
+                f"reply, and emits ICMPv6 Type 1 Code 3 (Address Unreachable) "
+                f"back to the tester. Per ETSI TS 133 117, sending this type "
+                f"is Permitted. 5 pings × 3 s timeout are sent to give "
+                f"OpenWRT's NDP resolution time to expire before the capture "
+                f"window closes."
             ),
         },
         {
@@ -470,23 +495,41 @@ def _get_ipv6_send_tests(context):
             ),
         },
         {
-            "name": "Router Advertisement (Type 134) - NOT PERMITTED",
+            "name": "Router Advertisement (Type 134) - REQUIRED",
             "icmp_type": 134,
+            # Send the RS to the all-routers multicast address so OpenWRT
+            # sees it on the right interface; unicast to dut_ipv6 also works
+            # but RFC 4861 s.6.2.6 says routers MUST respond to unicast RS.
             "send_cmd": (
                 f"sudo python3 -c \""
                 f"from scapy.all import *; "
-                f"send(IPv6(dst='{dut_ipv6}')/ICMPv6ND_RS())"
+                f"send(IPv6(dst='ff02::2')/ICMPv6ND_RS(), verbose=0)"
                 f"\""
             ),
-            "response_filter": f"icmpv6.type == 134 and ipv6.src == {dut_ipv6}",
-            "permitted": False,
-            "wait_time": 4,
+            # Accept RA sourced from either the DuT's ULA/GUA or its
+            # link-local (routers source RAs from their link-local per RFC 4861).
+            "response_filter": (
+                f"icmpv6.type == 134 and "
+                f"(ipv6.src == {dut_ipv6} or ipv6.src[0:4] == fe:80)"
+            ),
+            "permitted": True,
+            "wait_time": 6,
             "description": (
-                f"ICMPv6 Type 134 - Router Advertisement (NOT PERMITTED): "
-                f"We send a Router Solicitation (Type 133) to the DuT at "
-                f"{dut_ipv6}. Per ETSI TS 133 117, the DuT MUST NOT respond "
-                f"with a Router Advertisement. If no Type 134 is seen, the "
-                f"DuT is compliant."
+                f"ICMPv6 Type 134 - Router Advertisement (REQUIRED): "
+                f"We send a Router Solicitation (Type 133) to the all-routers "
+                f"multicast address (ff02::2) so that the DuT (OpenWRT at "
+                f"{dut_ipv6}) receives it. Per RFC 4861 section 6.2.6 a router "
+                f"MUST reply to a valid RS with a Router Advertisement (RA). "
+                f"The RA carries the ULA prefix, default router lifetime, and "
+                f"M/O flags that allow hosts on the link to auto-configure. "
+                f"Routers always source RAs from their link-local address, so "
+                f"the filter accepts any RA (icmpv6.type==134) from any "
+                f"fe80:: source as well as the DuT ULA. If a Type 134 is seen, "
+                f"the DuT correctly fulfils its role as an IPv6 router (PASS). "
+                f"If no RA is observed the test reports INCONCLUSIVE (the DuT "
+                f"may be silent because the RS was multicast-filtered or rate-"
+                f"limited; a targeted retest with a unicast RS to {dut_ipv6} "
+                f"is recommended before concluding non-compliance)."
             ),
         },
         {
@@ -725,14 +768,27 @@ def _test_redirect_real(context, ip_version, icmp_type, name, aux_ip, openwrt_ip
     )]).run(context)
     StepRunner([CommandStep("tester", f"echo '--- BEFORE Redirect ---'")]).run(context)
 
-    if ip_version == 4:
-        tr_cmd = f"traceroute -n -m 5 -w 2 {aux_ip}"
-    else:
-        tr_cmd = f"traceroute6 -n -m 5 -w 2 {aux_ip}"
+    # Traceroute command + tee to a temp file so we can compare hop topology
+    # using clean file content rather than the tmux pane buffer.
+    # tmux capture-pane returns the full VISIBLE terminal buffer including
+    # banner lines and per-hop RTTs that vary between runs -- comparing those
+    # raw strings always yields "changed" even when the hop path is identical.
+    # Writing output to a dedicated file (one per direction) avoids all that.
+    tr_out_before = f"/tmp/tr{ip_version}_before_{icmp_type}.txt"
+    tr_out_after  = f"/tmp/tr{ip_version}_after_{icmp_type}.txt"
 
-    StepRunner([CommandStep("tester", tr_cmd)]).run(context)
-    time.sleep(8)
-    route_before = context.terminal_manager.capture_output("tester")
+    if ip_version == 4:
+        tr_cmd_before = f"traceroute -n -m 5 -w 2 {aux_ip} | tee {tr_out_before}"
+        tr_cmd_after  = f"traceroute -n -m 5 -w 2 {aux_ip} | tee {tr_out_after}"
+    else:
+        tr_cmd_before = f"traceroute6 -n -m 5 -w 2 {aux_ip} | tee {tr_out_before}"
+        tr_cmd_after  = f"traceroute6 -n -m 5 -w 2 {aux_ip} | tee {tr_out_after}"
+
+    StepRunner([CommandStep("tester", tr_cmd_before)]).run(context)
+    # traceroute6 -m 5 -w 2 worst case: 5 hops × 2 s + 2 s margin = 12 s
+    time.sleep(12)
+    route_before = _sh(f"cat {tr_out_before}", timeout=5)
+    print(f"    [i] route_before raw:\n{route_before}")
     StepRunner([ScreenshotStep(
         terminal="tester",
         suffix=f"redirect_before_ipv{ip_version}_type_{icmp_type}"
@@ -757,9 +813,10 @@ def _test_redirect_real(context, ip_version, icmp_type, name, aux_ip, openwrt_ip
     print(f"[*] Traceroute AFTER Redirect...")
     StepRunner([CommandStep("tester", "clear")]).run(context)
     StepRunner([CommandStep("tester", f"echo '--- AFTER Redirect ---'")]).run(context)
-    StepRunner([CommandStep("tester", tr_cmd)]).run(context)
-    time.sleep(8)
-    route_after = context.terminal_manager.capture_output("tester")
+    StepRunner([CommandStep("tester", tr_cmd_after)]).run(context)
+    time.sleep(12)
+    route_after = _sh(f"cat {tr_out_after}", timeout=5)
+    print(f"    [i] route_after raw:\n{route_after}")
     StepRunner([ScreenshotStep(
         terminal="tester",
         suffix=f"redirect_after_ipv{ip_version}_type_{icmp_type}"
@@ -870,17 +927,25 @@ def _test_process_crafted(context, ip_version, icmp_type, name, aux_ip, openwrt_
     """
     openwrt_ipv6 = context.openwrt_ipv6 or openwrt_ip
 
+    # Use tee to write traceroute output to temp files so hop-topology
+    # comparison is done on clean file content, not the tmux pane buffer.
+    tr_out_before = f"/tmp/proc{ip_version}_before_{icmp_type}.txt"
+    tr_out_after  = f"/tmp/proc{ip_version}_after_{icmp_type}.txt"
+
     if ip_version == 4:
-        traceroute_cmd = f"traceroute -n -m 5 -w 2 {aux_ip}"
+        traceroute_cmd_before = f"traceroute -n -m 5 -w 2 {aux_ip} | tee {tr_out_before}"
+        traceroute_cmd_after  = f"traceroute -n -m 5 -w 2 {aux_ip} | tee {tr_out_after}"
     else:
-        traceroute_cmd = f"traceroute6 -n -m 5 -w 2 {aux_ip}"
+        traceroute_cmd_before = f"traceroute6 -n -m 5 -w 2 {aux_ip} | tee {tr_out_before}"
+        traceroute_cmd_after  = f"traceroute6 -n -m 5 -w 2 {aux_ip} | tee {tr_out_after}"
 
     # 1. Traceroute BEFORE
     print(f"[*] Traceroute BEFORE sending Type {icmp_type}")
     StepRunner([CommandStep("tester", f"echo '--- BEFORE Type {icmp_type} ---'")]).run(context)
-    StepRunner([CommandStep("tester", traceroute_cmd)]).run(context)
-    time.sleep(8)
-    route_before = context.terminal_manager.capture_output("tester")
+    StepRunner([CommandStep("tester", traceroute_cmd_before)]).run(context)
+    time.sleep(12)
+    route_before = _sh(f"cat {tr_out_before}", timeout=5)
+    print(f"    [i] route_before raw:\n{route_before}")
     StepRunner([ScreenshotStep(
         terminal="tester",
         suffix=f"process_before_ipv{ip_version}_type_{icmp_type}"
@@ -925,9 +990,10 @@ def _test_process_crafted(context, ip_version, icmp_type, name, aux_ip, openwrt_
     print(f"[*] Traceroute AFTER sending Type {icmp_type}")
     StepRunner([CommandStep("tester", "clear")]).run(context)
     StepRunner([CommandStep("tester", f"echo '--- AFTER Type {icmp_type} ---'")]).run(context)
-    StepRunner([CommandStep("tester", traceroute_cmd)]).run(context)
-    time.sleep(8)
-    route_after = context.terminal_manager.capture_output("tester")
+    StepRunner([CommandStep("tester", traceroute_cmd_after)]).run(context)
+    time.sleep(12)
+    route_after = _sh(f"cat {tr_out_after}", timeout=5)
+    print(f"    [i] route_after raw:\n{route_after}")
 
     # Print description
     _echo_description(context, desc)

@@ -392,14 +392,11 @@ def _get_ipv6_send_tests(context):
             "name": "Destination Unreachable (Type 1)",
             "icmp_type": 1,
             # Use 5 pings × 3 s timeout each = 15 s total transmission window.
-            # OpenWRT first does NDP (up to ~3 s) before deciding the target is
-            # unreachable and emitting ICMPv6 Type 1 Code 3.  Two quick pings
-            # are not enough to reliably trigger that NDP-timeout path.
+            # OpenWRT (DuT) first does NDP for the nonsense address (~3 s probe
+            # cycle) before deciding the target is unreachable and emitting
+            # ICMPv6 Type 1 Code 3. The previous 3 × 2s window was too short.
             "send_cmd": f"ping6 -c 5 -W 3 {nonsense_ipv6}",
-            "response_filter": (
-                f"icmpv6.type == 1 and "
-                f"(ipv6.src == {dut_ipv6} or ipv6.src == {openwrt_ipv6})"
-            ),
+            "response_filter": f"icmpv6.type == 1 and ipv6.src == {dut_ipv6}",
             "permitted": True,
             "wait_time": 18,
             "description": (

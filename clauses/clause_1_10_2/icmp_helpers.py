@@ -425,11 +425,9 @@ def _get_ipv6_send_tests(context):
     # Scapy does not accept %zone suffixes (e.g. 'fe80::1%eth0') — it tries
     # a DNS lookup and fails with 'Name or service not known'.  Strip them here
     # once so every send_cmd below gets a clean address automatically.
-    s_dut      = _scapy_addr(dut_ipv6)
-    s_aux      = _scapy_addr(aux_ipv6)
-    s_nonsense = _scapy_addr(nonsense_ipv6)
-    aux_ipv6 = context.auxiliary_ipv6
-    # Scapy-safe hop-limit target
+    s_dut         = _scapy_addr(dut_ipv6)
+    s_aux         = _scapy_addr(aux_ipv6)
+    s_nonsense    = _scapy_addr(nonsense_ipv6)
     s_hlim_target = s_aux if s_aux else s_nonsense
 
     tests = [
@@ -461,7 +459,7 @@ def _get_ipv6_send_tests(context):
             "wait_time": 4,
             "description": (
                 f"ICMPv6 Type 3 - Time Exceeded: We send a packet with "
-                f"Hop Limit=1 destined for {hlim_target} via the DuT. The "
+                f"Hop Limit=1 destined for {s_hlim_target} via the DuT. The "
                 f"router tries to forward it, decrements the hop limit to 0, "
                 f"and sends back a Time Exceeded message. Per ETSI, sending "
                 f"this type is Optional."

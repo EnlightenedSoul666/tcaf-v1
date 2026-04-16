@@ -393,10 +393,13 @@ def _get_ipv6_send_tests(context):
         {
             "name": "Packet Too Big (Type 2)",
             "icmp_type": 2,
+            # 1400-byte payload fits a 1500-MTU link, so scapy's raw-IPv6
+            # socket won't return EMSGSIZE ("cannot fragment this packet")
+            # -- which was the crash in the previous 8000-byte version.
             "send_cmd": (
                 f"sudo python3 -c \""
                 f"from scapy.all import *; "
-                f"send(IPv6(dst='{ptb_target}')/ICMPv6EchoRequest()/Raw(b'A'*8000))"
+                f"send(IPv6(dst='{ptb_target}')/ICMPv6EchoRequest()/Raw(b'A'*1400), verbose=0)"
                 f"\""
             ),
             # Accept PTB sourced from the DuT's GUA/ULA *or* its link-local
@@ -410,13 +413,20 @@ def _get_ipv6_send_tests(context):
             "permitted": True,
             "wait_time": 4,
             "description": (
-                f"ICMPv6 Type 2 - Packet Too Big: We send an 8000-byte IPv6 "
-                f"packet destined for the auxiliary machine at {ptb_target} "
-                f"via the DuT (OpenWRT). Because IPv6 forbids in-flight "
-                f"fragmentation (RFC 8200), OpenWRT cannot split the packet "
-                f"onto its egress link (MTU 1500) and MUST return an ICMPv6 "
-                f"Packet Too Big message to the sender, advertising the link "
-                f"MTU. Per ETSI, sending this type is Permitted."
+                f"ICMPv6 Type 2 - Packet Too Big: We send a 1400-byte ICMPv6 "
+                f"Echo Request destined for the auxiliary machine at "
+                f"{ptb_target} via the DuT (OpenWRT). A PTB can only be "
+                f"generated when the DuT has to forward a packet that is "
+                f"LARGER than its egress link MTU; IPv6 forbids in-flight "
+                f"fragmentation (RFC 8200), so the router must drop and "
+                f"notify the sender with the link MTU. In a homogeneous "
+                f"1500-MTU lab no asymmetric bottleneck exists, so no PTB "
+                f"is generated and this case reports INCONCLUSIVE -- which "
+                f"is permitted behaviour per ETSI (Type 2 is 'Permitted', "
+                f"not 'Required'). To make this test actively PASS, shrink "
+                f"an egress interface MTU on the DuT (e.g. 'ip link set "
+                f"br-lan mtu 1280' on OpenWRT) so the 1400-byte probe no "
+                f"longer fits on the forward path."
             ),
         },
         {

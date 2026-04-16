@@ -61,14 +61,109 @@ def _mac_from_ipv4(ipv4, iface):
     return m.group(1).lower() if m else None
 
 
-def _discover_ipv6_via_ndp(ipv4, iface):
-    """
-    Resolve IPv6 from IPv4 using ARP -> NDP.
+def _first_four_hextets(ipv6):
+    """Return the /64 prefix of an IPv6 address as 'aaaa:bbbb:cccc:dddd'."""
+    if not ipv6:
+        return None
+    addr = ipv6.split("%")[0].split("/")[0]
+    if "::" in addr:
+        left, right = addr.split("::", 1)
+        lparts = [p for p in left.split(":") if p]
+        rparts = [p for p in right.split(":") if p]
+        missing = 8 - len(lparts) - len(rparts)
+        parts = lparts + ["0"] * missing + rparts
+    else:
+        parts = addr.split(":")
+    if len(parts) < 4:
+        return None
+    return ":".join(parts[:4])
 
-      1. ARP the IPv4 neighbour to get its MAC.
-      2. Ping ff02::1 (all-nodes multicast) to populate the IPv6 neighbour cache.
-      3. Scan `ip -6 neigh show` for rows whose lladdr matches the MAC.
-      4. Prefer ULA (fd/fc) > GUA (2xxx/3xxx) > link-local (fe80::, zoned).
+
+def _mac_to_eui64(mac):
+    """aa:bb:cc:dd:ee:ff -> a8bb:ccff:fedd:eeff (SLAAC EUI-64 with U/L bit flipped)."""
+    try:
+        b = [int(p, 16) for p in mac.split(":")]
+        if len(b) != 6:
+            return None
+        b[0] ^= 0x02  # flip Universal/Local bit
+        return (
+            f"{b[0]:02x}{b[1]:02x}:{b[2]:02x}ff:"
+            f"fe{b[3]:02x}:{b[4]:02x}{b[5]:02x}"
+        )
+    except (ValueError, IndexError):
+        return None
+
+
+def _tester_ula_prefix(iface):
+    """
+    Extract a /64 ULA prefix from one of the tester's OWN addresses on this
+    interface. The tester will have been SLAAC-configured from OpenWRT's RA,
+    so it holds a ULA in the same prefix as OpenWRT and Metasploitable.
+    """
+    out = _sh(f"ip -6 addr show dev {iface}")
+    for line in out.splitlines():
+        m = re.search(r"inet6\s+([0-9a-fA-F:]+)/\d+\s+scope\s+global", line)
+        if m:
+            addr = m.group(1)
+            if addr.lower().startswith(("fd", "fc")):
+                return _first_four_hextets(addr)
+    return None
+
+
+def _default_ipv6_via(iface):
+    """
+    Return the 'via' address of the IPv6 default route on `iface`.
+    This IS OpenWRT's address (ULA preferred, then GUA, then link-local).
+    """
+    out = _sh("ip -6 route show")
+    ula = gua = lla = None
+    for line in out.splitlines():
+        m = re.search(
+            r"default\s+via\s+([0-9a-fA-F:]+).*\bdev\s+" + re.escape(iface),
+            line,
+        )
+        if m:
+            addr = m.group(1).lower()
+            if addr.startswith(("fd", "fc")) and ula is None:
+                ula = addr
+            elif addr[0] in "23" and gua is None:
+                gua = addr
+            elif addr.startswith("fe80") and lla is None:
+                lla = f"{addr}%{iface}"
+    return ula or gua or lla
+
+
+def _ping6_reachable(addr, iface, timeout=2):
+    """Return True if one ICMPv6 echo reply comes back."""
+    out = _sh(
+        f"ping6 -c 1 -W {timeout} -I {iface} {addr}",
+        timeout=timeout + 2,
+    )
+    return "bytes from" in out or "icmp_seq=" in out
+
+
+def _discover_ipv6_via_ndp(ipv4, iface, is_dut=False):
+    """
+    Resolve a neighbour's GLOBAL-SCOPE IPv6 address from its IPv4 address.
+
+    We explicitly avoid returning link-local (fe80::) addresses when a ULA
+    or GUA is reachable, because:
+      - Scapy / tshark display filters don't handle `%iface` zone ids well.
+      - `ip -6 route add ... via fe80::...` needs the zone id too, and
+        readability + reliability drop dramatically.
+
+    Strategy (first hit wins):
+      1. ARP the IPv4 to learn the MAC.
+      2. If DuT: read `ip -6 route show default` -- the `via` IS OpenWRT.
+      3. Build a candidate from (tester's ULA prefix) + (target's EUI-64);
+         for the DuT also try `prefix::1` (common router convention).
+         Ping each candidate; first responder wins.
+      4. Scan `ip -6 neigh show` for any ULA/GUA entry matching the MAC.
+      5. Last resort: link-local (with %iface zone id).
+
+    `ping6 ff02::1` is intentionally NOT used -- multicast responders
+    always reply from their link-local address, so the NDP cache never
+    learns ULA entries from that stimulus alone.
     """
     if not (ipv4 and iface):
         return None
@@ -77,30 +172,53 @@ def _discover_ipv6_via_ndp(ipv4, iface):
     if not mac:
         return None
 
-    # Seed IPv6 neighbour cache. Short timeout; we don't care about replies,
-    # only that the kernel learns the mappings.
-    _sh(f"ping6 -c 2 -W 1 -I {iface} ff02::1", timeout=5)
+    # (2) DuT shortcut: default route's `via` address is OpenWRT's own IPv6.
+    if is_dut:
+        gw = _default_ipv6_via(iface)
+        if gw and gw.lower().startswith(("fd", "fc", "2", "3")):
+            _sh(f"ping6 -c 1 -W 1 -I {iface} {gw}")  # populate cache
+            return gw
 
+    # (3) Construct candidates from prefix + EUI-64 (and router '::1' for DuT).
+    prefix = _tester_ula_prefix(iface)
+    if prefix:
+        candidates = []
+        if is_dut:
+            candidates.append(f"{prefix}::1")  # typical OpenWRT LAN gateway
+        eui = _mac_to_eui64(mac)
+        if eui:
+            candidates.append(f"{prefix}::{eui}")
+        for c in candidates:
+            if _ping6_reachable(c, iface):
+                return c
+
+    # (4) NDP cache scan — anything global-scope matching this MAC.
     out = _sh(f"ip -6 neigh show dev {iface}")
-    candidates = []
+    for want in ("fd", "fc", "2", "3"):
+        for line in out.splitlines():
+            m = re.match(r"(\S+)\s+lladdr\s+([0-9a-f:]{17})", line)
+            if (
+                m
+                and m.group(2).lower() == mac
+                and m.group(1).lower().startswith(want)
+            ):
+                return m.group(1)
+
+    # (5) Last resort: link-local.
+    _sh(f"ping6 -c 2 -W 1 -I {iface} ff02::1", timeout=5)
+    out = _sh(f"ip -6 neigh show dev {iface}")
     for line in out.splitlines():
         m = re.match(r"(\S+)\s+lladdr\s+([0-9a-f:]{17})", line)
-        if m and m.group(2).lower() == mac:
-            candidates.append(m.group(1))
-
-    # ULA first (matches typical lab networks using fd.../fc... prefixes).
-    for pref in ("fd", "fc"):
-        for a in candidates:
-            if a.lower().startswith(pref):
-                return a
-    # Then global unicast.
-    for a in candidates:
-        if a and a[0] in "23":
-            return a
-    # Last resort: link-local with zone id so ping6 / scapy can use it.
-    for a in candidates:
-        if a.lower().startswith("fe80"):
-            return f"{a}%{iface}"
+        if (
+            m
+            and m.group(2).lower() == mac
+            and m.group(1).lower().startswith("fe80")
+        ):
+            print(
+                f"    [!] WARNING: only link-local found for {ipv4} "
+                f"({m.group(1)}); ULA/GUA discovery failed."
+            )
+            return f"{m.group(1)}%{iface}"
 
     return None
 
@@ -214,7 +332,9 @@ class Clause_1_10_2(BaseClause):
 
         # OpenWRT / DuT
         if ctx.openwrt_ip:
-            ipv6 = _discover_ipv6_via_ndp(ctx.openwrt_ip, ctx.tester_iface)
+            ipv6 = _discover_ipv6_via_ndp(
+                ctx.openwrt_ip, ctx.tester_iface, is_dut=True
+            )
             if ipv6:
                 ctx.openwrt_ipv6 = ipv6
                 ctx.dut_ipv6 = ipv6
@@ -225,7 +345,9 @@ class Clause_1_10_2(BaseClause):
         # Metasploitable / auxiliary
         meta_ip = getattr(ctx, "metasploitable_ip", None)
         if meta_ip:
-            ipv6 = _discover_ipv6_via_ndp(meta_ip, ctx.tester_iface)
+            ipv6 = _discover_ipv6_via_ndp(
+                meta_ip, ctx.tester_iface, is_dut=False
+            )
             if ipv6:
                 ctx.auxiliary_ipv6 = ipv6
                 print(f"    Metasploitable ({meta_ip}):  {ipv6}")

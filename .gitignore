@@ -4,3 +4,6 @@ logs
 output
 *.ps
 .claude
+# Manual test scripts (local only, not committed)
+test_*.sh
+*_test.sh

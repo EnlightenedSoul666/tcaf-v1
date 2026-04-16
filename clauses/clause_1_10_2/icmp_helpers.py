@@ -31,6 +31,27 @@ def _sh(cmd, timeout=10):
 
 
 # ---------------------------------------------------------------------------
+#  Scapy address helper — strip %zone before passing to scapy
+# ---------------------------------------------------------------------------
+
+def _scapy_addr(addr):
+    """
+    Strip the %zone suffix from an IPv6 address before use in scapy.
+
+    Scapy does not understand the zone-id syntax ('fe80::1%eth0').
+    When it sees a '%' in the string it tries a DNS lookup, fails with
+    'Name or service not known', and aborts the whole send command.
+
+    Examples:
+      'fdd4:48ab:15e6::1'   -> 'fdd4:48ab:15e6::1'  (unchanged)
+      'fe80::1%eth0'        -> 'fe80::1'
+    """
+    if addr and '%' in addr:
+        return addr.split('%')[0]
+    return addr or ""
+
+
+# ---------------------------------------------------------------------------
 #  Route command helper (handles link-local %zone syntax)
 # ---------------------------------------------------------------------------
 
@@ -396,17 +417,20 @@ def _get_ipv6_send_tests(context):
     Each test sends one specific packet and expects (or must NOT see)
     a specific response from the DuT (OpenWRT router).
     """
-    dut_ipv6 = context.dut_ipv6
+    dut_ipv6     = context.dut_ipv6
     openwrt_ipv6 = context.openwrt_ipv6 or dut_ipv6
     nonsense_ipv6 = context.nonsense_ipv6 or "fd00:dead:beef::99"
+    aux_ipv6     = context.auxiliary_ipv6
+
+    # Scapy does not accept %zone suffixes (e.g. 'fe80::1%eth0') — it tries
+    # a DNS lookup and fails with 'Name or service not known'.  Strip them here
+    # once so every send_cmd below gets a clean address automatically.
+    s_dut      = _scapy_addr(dut_ipv6)
+    s_aux      = _scapy_addr(aux_ipv6)
+    s_nonsense = _scapy_addr(nonsense_ipv6)
     aux_ipv6 = context.auxiliary_ipv6
-    # For hop-limit test, route through OpenWRT to a real target
-    hlim_target = aux_ipv6 if aux_ipv6 else nonsense_ipv6
-    # For Packet-Too-Big test, packet must *cross* the router (not terminate
-    # at it). We send to the auxiliary machine through OpenWRT; OpenWRT must
-    # forward onto an egress link whose MTU is smaller than the packet size
-    # and (per RFC 8200, no in-flight IPv6 fragmentation) reply with PTB.
-    ptb_target = aux_ipv6 if aux_ipv6 else nonsense_ipv6
+    # Scapy-safe hop-limit target
+    s_hlim_target = s_aux if s_aux else s_nonsense
 
     tests = [
         {
@@ -429,7 +453,7 @@ def _get_ipv6_send_tests(context):
             "send_cmd": (
                 f"sudo python3 -c \""
                 f"from scapy.all import *; "
-                f"send(IPv6(dst='{hlim_target}', hlim=1)/ICMPv6EchoRequest())"
+                f"send(IPv6(dst='{s_hlim_target}', hlim=1)/ICMPv6EchoRequest())"
                 f"\""
             ),
             "response_filter": f"icmpv6.type == 3 and ipv6.src == {dut_ipv6}",
@@ -449,7 +473,7 @@ def _get_ipv6_send_tests(context):
             "send_cmd": (
                 f"sudo python3 -c \""
                 f"from scapy.all import *; "
-                f"send(IPv6(dst='{dut_ipv6}', nh=255)/Raw(b'\\x00'*40))"
+                f"send(IPv6(dst='{s_dut}', nh=255)/Raw(b'\\x00'*40))"
                 f"\""
             ),
             "response_filter": f"icmpv6.type == 4 and ipv6.src == {dut_ipv6}",
@@ -477,7 +501,7 @@ def _get_ipv6_send_tests(context):
                 f"from scapy.all import *; "
                 f"send(IPv6(dst='ff02::2')/ICMPv6ND_RS(), verbose=0); "
                 f"import time; time.sleep(1); "
-                f"send(IPv6(dst='{dut_ipv6}')/ICMPv6ND_RS(), verbose=0)"
+                f"send(IPv6(dst='{s_dut}')/ICMPv6ND_RS(), verbose=0)"
                 f"\""
             ),
             # Routers source RA from their link-local address (RFC 4861 s.4.2),
@@ -507,7 +531,7 @@ def _get_ipv6_send_tests(context):
             "send_cmd": (
                 f"sudo python3 -c \""
                 f"from scapy.all import *; "
-                f"send(IPv6(dst='{dut_ipv6}')/ICMPv6ND_NS(tgt='{dut_ipv6}'))"
+                f"send(IPv6(dst='{s_dut}')/ICMPv6ND_NS(tgt='{s_dut}'))"
                 f"\""
             ),
             "response_filter": f"icmpv6.type == 136 and ipv6.src == {dut_ipv6}",
@@ -895,6 +919,7 @@ def _test_process_crafted(context, ip_version, icmp_type, name, aux_ip, openwrt_
     does not change (traceroute before == traceroute after).
     """
     openwrt_ipv6 = context.openwrt_ipv6 or openwrt_ip
+    s_openwrt    = _scapy_addr(openwrt_ipv6)   # strip %zone for scapy
 
     # Use tee to write traceroute output to temp files so hop-topology
     # comparison is done on clean file content, not the tmux pane buffer.
@@ -929,7 +954,7 @@ def _test_process_crafted(context, ip_version, icmp_type, name, aux_ip, openwrt_
         send_cmd = (
             f"sudo python3 -c \""
             f"from scapy.all import *; "
-            f"send(IPv6(dst='{openwrt_ipv6}')/ICMPv6ND_RS())\""
+            f"send(IPv6(dst='{s_openwrt}')/ICMPv6ND_RS())\""
         )
         desc = (
             f"ICMPv6 Process Test - Router Solicitation (Type 133): We send "
@@ -941,7 +966,7 @@ def _test_process_crafted(context, ip_version, icmp_type, name, aux_ip, openwrt_
         send_cmd = (
             f"sudo python3 -c \""
             f"from scapy.all import *; "
-            f"send(IPv6(dst='{openwrt_ipv6}')/ICMPv6ND_RA())\""
+            f"send(IPv6(dst='{s_openwrt}')/ICMPv6ND_RA())\""
         )
         desc = (
             f"ICMPv6 Process Test - Router Advertisement (Type 134): We send "
@@ -1191,6 +1216,7 @@ def run_dest_unreachable_test_ipv6(context):
 
     openwrt_ipv6 = context.openwrt_ipv6 or dut_ipv6
     via_clause   = _ipv6_route_via_clause(openwrt_ipv6)
+    s_nonsense   = _scapy_addr(nonsense)   # strip %zone for scapy
 
     # -- 1. Flush OpenWRT NDP cache for nonsense address -------------------
     print(f"[1/5] Flushing OpenWRT NDP cache for {nonsense}...")
@@ -1236,7 +1262,7 @@ def run_dest_unreachable_test_ipv6(context):
     send_cmd = (
         f"sudo python3 -c \""
         f"from scapy.all import *; import time; "
-        f"pkt = IPv6(dst='{nonsense}')/ICMPv6EchoRequest(); "
+        f"pkt = IPv6(dst='{s_nonsense}')/ICMPv6EchoRequest(); "
         f"[send(pkt, verbose=0) or time.sleep(1.2) for _ in range(10)]\""
     )
     StepRunner([CommandStep("tester", send_cmd)]).run(context)
@@ -1315,8 +1341,9 @@ def run_ptb_test_ipv6(context):
         return "SKIPPED"
 
     original_mtu = None
-    reduced_mtu = 1280
-    packet_size = 1400
+    reduced_mtu  = 1280
+    packet_size  = 1400
+    s_aux        = _scapy_addr(aux_ipv6)   # strip %zone for scapy
 
     print("\n" + "="*70)
     print("Dedicated PTB Test (ICMPv6 Type 2)")
@@ -1370,7 +1397,7 @@ def run_ptb_test_ipv6(context):
     send_cmd = (
         f"sudo python3 -c \""
         f"from scapy.all import *; "
-        f"send(IPv6(dst='{aux_ipv6}')/ICMPv6EchoRequest()/Raw(b'A'*{packet_size}), verbose=0)\""
+        f"send(IPv6(dst='{s_aux}')/ICMPv6EchoRequest()/Raw(b'A'*{packet_size}), verbose=0)\""
     )
     StepRunner([CommandStep("tester", send_cmd)]).run(context)
     time.sleep(5)

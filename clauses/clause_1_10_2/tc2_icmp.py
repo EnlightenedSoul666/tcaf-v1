@@ -3,8 +3,8 @@ from clauses.clause_1_10_2.icmp_helpers import (
     run_unified_send_tests,
     check_not_permitted_process,
     setup_routing, teardown_routing,
+    run_ptb_test_ipv6,
 )
-from clauses.clause_1_10_2.ptb_test import PTBTest
 
 
 class TC2ICMPIPv6(TestCase):
@@ -50,8 +50,7 @@ class TC2ICMPIPv6(TestCase):
         # Per RFC 8200: PTB is generated when packet size > outgoing MTU.
         # ===================================================================
         print("\n[=== DEDICATED PTB TEST (IPv6 Type 2) ===]")
-        ptb_test = PTBTest(context)
-        ptb_status = ptb_test.run()
+        ptb_status = run_ptb_test_ipv6(context)
         # PTB is Optional per ETSI (Type 2 Permitted, not Required),
         # so INCONCLUSIVE is acceptable. Only FAIL on violation.
         context.current_testcase.sub_results.append({

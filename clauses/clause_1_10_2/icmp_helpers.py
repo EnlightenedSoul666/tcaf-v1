@@ -1197,3 +1197,157 @@ def validate_pcap(context, pcap_path):
         return "INCONCLUSIVE"
 
     return "PASS"
+
+
+# ===========================================================================
+#  DEDICATED PACKET TOO BIG TEST (ICMPv6 Type 2)
+#  Per RFC 8200 Section 4.2: PTB generated when packet > egress MTU
+# ===========================================================================
+
+def run_ptb_test_ipv6(context):
+    """
+    Dedicated Packet Too Big (Type 2) test for IPv6.
+
+    Workflow:
+      1. Query OpenWRT's current br-lan MTU via SSH
+      2. Reduce to 1280 (packet will be 1400, triggering PTB)
+      3. Start PCAP capture
+      4. Send 1400-byte ICMPv6 Echo Request to auxiliary machine
+      5. Stop PCAP and analyze for Type 2 from DuT
+      6. Restore original MTU
+      7. Return PASS (Type 2 found) or INCONCLUSIVE (not found)
+
+    Returns status string: "PASS", "INCONCLUSIVE", or "SKIPPED"
+    """
+    dut_ipv6 = context.dut_ipv6
+    aux_ipv6 = context.auxiliary_ipv6
+
+    if not (dut_ipv6 and aux_ipv6):
+        print("[-] Missing DuT or auxiliary IPv6. Skipping dedicated PTB test.")
+        return "SKIPPED"
+
+    if not context.openwrt_ip or not context.openwrt_password:
+        print("[-] OpenWRT credentials required for PTB test. Skipping.")
+        return "SKIPPED"
+
+    original_mtu = None
+    reduced_mtu = 1280
+    packet_size = 1400
+
+    print("\n" + "="*70)
+    print("Dedicated PTB Test (ICMPv6 Type 2)")
+    print("="*70)
+
+    # -- Query original MTU -----------------------------------------------
+    print("[1/6] Querying OpenWRT br-lan MTU...")
+    query_mtu_cmd = (
+        f"sshpass -p '{context.openwrt_password}' "
+        f"ssh -o StrictHostKeyChecking=no root@{context.openwrt_ip} "
+        f"'ip link show br-lan 2>/dev/null | grep mtu | awk {{print $5}}' 2>/dev/null"
+    )
+    try:
+        result = subprocess.run(query_mtu_cmd, shell=True, capture_output=True, text=True, timeout=10)
+        if result.returncode == 0 and result.stdout.strip():
+            mtu_str = result.stdout.strip()
+            if mtu_str.startswith("mtu"):
+                original_mtu = int(mtu_str.split()[1])
+                print(f"    Original MTU: {original_mtu}")
+    except Exception as e:
+        print(f"    [!] Could not query MTU: {e}")
+
+    # -- Reduce MTU -------------------------------------------------------
+    print(f"[2/6] Reducing br-lan MTU to {reduced_mtu}...")
+    reduce_mtu_cmd = (
+        f"sshpass -p '{context.openwrt_password}' "
+        f"ssh -o StrictHostKeyChecking=no root@{context.openwrt_ip} "
+        f"'ip link set br-lan mtu {reduced_mtu}' 2>/dev/null"
+    )
+    try:
+        result = subprocess.run(reduce_mtu_cmd, shell=True, capture_output=True, timeout=10)
+        if result.returncode == 0:
+            print(f"    ✓ MTU set to {reduced_mtu}")
+    except Exception as e:
+        print(f"    [!] Failed to reduce MTU: {e}")
+    time.sleep(2)
+
+    # -- Start PCAP capture -----------------------------------------------
+    print("[3/6] Starting PCAP capture...")
+    iface = getattr(context, "tester_iface", None) or "eth0"
+    pcap_filename = "icmp_ipv6_ptb_dedicated.pcapng"
+    StepRunner([PcapStartStep(interface=iface, filename=pcap_filename)]).run(context)
+    time.sleep(2)
+
+    # -- Send oversized packet --------------------------------------------
+    print(f"[4/6] Sending {packet_size}-byte ICMPv6 Echo Request to {aux_ipv6}...")
+    StepRunner([CommandStep("tester", "clear")]).run(context)
+    StepRunner([CommandStep("tester",
+        f"echo '[*] Sending {packet_size}-byte packet to {aux_ipv6}...'")]).run(context)
+
+    send_cmd = (
+        f"sudo python3 -c \""
+        f"from scapy.all import *; "
+        f"send(IPv6(dst='{aux_ipv6}')/ICMPv6EchoRequest()/Raw(b'A'*{packet_size}), verbose=0)\""
+    )
+    StepRunner([CommandStep("tester", send_cmd)]).run(context)
+    time.sleep(5)
+
+    # -- Stop PCAP and analyze --------------------------------------------
+    print("[5/6] Stopping PCAP and analyzing...")
+    StepRunner([PcapStopStep()]).run(context)
+    time.sleep(1)
+
+    pcap_path = context.pcap_file
+
+    # Display PCAP analysis
+    StepRunner([CommandStep("tester", "clear")]).run(context)
+    StepRunner([CommandStep("tester",
+        f"echo '=== Type 2 (PTB) Packets ===' && "
+        f"tshark -r {pcap_path} -Y 'icmpv6.type == 2'")]).run(context)
+    time.sleep(2)
+    StepRunner([ScreenshotStep(
+        terminal="tester",
+        suffix="ptb_dedicated_analysis"
+    )]).run(context)
+
+    # Check for Type 2 in PCAP
+    ptb_filter = f"icmpv6.type == 2 and ipv6.src == {dut_ipv6}"
+    StepRunner([AnalyzePcapStep(filter_expr=ptb_filter)]).run(context)
+    ptb_found = context.matched_frame is not None
+
+    if ptb_found:
+        print("[+] Type 2 (PTB) packet found")
+        StepRunner([WiresharkPacketScreenshotStep(
+            suffix="ptb_dedicated_packet",
+            display_filter=ptb_filter
+        )]).run(context)
+        ptb_status = "PASS"
+    else:
+        print("[-] No Type 2 packet found")
+        ptb_status = "INCONCLUSIVE"
+
+    # -- Restore original MTU ---------------------------------------------
+    print(f"[6/6] Restoring original MTU...")
+    if original_mtu:
+        restore_mtu_cmd = (
+            f"sshpass -p '{context.openwrt_password}' "
+            f"ssh -o StrictHostKeyChecking=no root@{context.openwrt_ip} "
+            f"'ip link set br-lan mtu {original_mtu}' 2>/dev/null"
+        )
+        try:
+            result = subprocess.run(restore_mtu_cmd, shell=True, capture_output=True, timeout=10)
+            if result.returncode == 0:
+                print(f"    ✓ MTU restored to {original_mtu}")
+        except Exception as e:
+            print(f"    [!] Failed to restore MTU: {e}")
+    time.sleep(1)
+
+    # Summary
+    print("\n" + "="*70)
+    print(f"Result: {ptb_status}")
+    print("="*70)
+    print(f"Packet size: {packet_size} bytes")
+    print(f"Reduced MTU: {reduced_mtu} bytes")
+    print(f"Type 2 found: {'Yes' if ptb_found else 'No'}")
+    print("="*70 + "\n")
+
+    return ptb_status
